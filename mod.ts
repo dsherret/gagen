@@ -4,6 +4,6 @@ export { Job } from "./job.ts";
 export type { JobConfig } from "./job.ts";
 export { createWorkflow, Workflow } from "./workflow.ts";
 export type { WorkflowConfig, WorkflowTriggers } from "./workflow.ts";
-export { Condition, expr, ExpressionValue } from "./expression.ts";
-export type { ExpressionSource } from "./expression.ts";
+export { Condition, ElseIfBuilder, expr, ExpressionValue, ThenBuilder } from "./expression.ts";
+export type { ExpressionSource, TernaryValue } from "./expression.ts";
 export { defineMatrix, Matrix } from "./matrix.ts";

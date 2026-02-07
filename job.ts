@@ -425,8 +425,10 @@ function topoSort(steps: Set<Step<string>>): Step<string>[] {
 function collectJobSources(value: unknown, out: Set<Job>): void {
   if (value instanceof Job) {
     out.add(value);
-  } else if (value instanceof ExpressionValue && value.source instanceof Job) {
-    out.add(value.source);
+  } else if (value instanceof ExpressionValue) {
+    for (const s of value.allSources) {
+      if (s instanceof Job) out.add(s);
+    }
   } else if (value instanceof Condition) {
     for (const source of value.sources) {
       if (source instanceof Job) {

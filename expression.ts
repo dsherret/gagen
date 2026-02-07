@@ -1,6 +1,11 @@
 // types that step/job/workflow will reference back to
 export type ExpressionSource = { readonly _id: string };
 
+const EMPTY_SOURCES: ReadonlySet<ExpressionSource> = new Set();
+
+/** Values that can appear in ternary `.then()` / `.else()` branches. */
+export type TernaryValue = string | number | boolean | ExpressionValue;
+
 /**
  * An expression that resolves to a value inside a GitHub Actions workflow.
  * Supports fluent comparison methods that produce Conditions.
@@ -8,10 +13,26 @@ export type ExpressionSource = { readonly _id: string };
 export class ExpressionValue {
   readonly #expression: string;
   readonly source: ExpressionSource | undefined;
+  readonly #allSources: ReadonlySet<ExpressionSource>;
 
-  constructor(expression: string, source?: ExpressionSource) {
+  constructor(
+    expression: string,
+    source?: ExpressionSource | ReadonlySet<ExpressionSource>,
+  ) {
     this.#expression = expression;
-    this.source = source;
+    if (source instanceof Set) {
+      this.source = undefined;
+      this.#allSources = source as ReadonlySet<ExpressionSource>;
+    } else {
+      const s = source as ExpressionSource | undefined;
+      this.source = s;
+      this.#allSources = s ? new Set([s]) : EMPTY_SOURCES;
+    }
+  }
+
+  /** all expression sources referenced by this value */
+  get allSources(): ReadonlySet<ExpressionSource> {
+    return this.#allSources;
   }
 
   /** raw expression text without `${{ }}` wrapping */
@@ -83,6 +104,18 @@ export abstract class Condition {
     return new NotCondition(this, this.sources);
   }
 
+  /**
+   * Starts a ternary expression: `condition && trueValue || falseValue`.
+   *
+   * ```ts
+   * const runner = os.equals("linux").then("ubuntu-latest").else("macos-latest");
+   * // => matrix.os == 'linux' && 'ubuntu-latest' || 'macos-latest'
+   * ```
+   */
+  then(value: TernaryValue): ThenBuilder {
+    return new ThenBuilder([{ condition: this, value }], this.sources);
+  }
+
   /** render without `${{ }}` wrapping */
   abstract toExpression(): string;
 
@@ -139,7 +172,8 @@ export class FunctionCallCondition extends Condition {
 
 /** `left && right` or `left || right` */
 class LogicalCondition extends Condition {
-  readonly #op: "&&" | "||";
+  // not private — accessible within this module for ternary parenthesization
+  readonly op: "&&" | "||";
   readonly #left: Condition;
   readonly #right: Condition;
 
@@ -150,7 +184,7 @@ class LogicalCondition extends Condition {
     sources: ReadonlySet<ExpressionSource>,
   ) {
     super(sources);
-    this.#op = op;
+    this.op = op;
     this.#left = left;
     this.#right = right;
   }
@@ -163,11 +197,11 @@ class LogicalCondition extends Condition {
     const right = this.#needsParens(this.#right)
       ? `(${this.#right.toExpression()})`
       : this.#right.toExpression();
-    return `${left} ${this.#op} ${right}`;
+    return `${left} ${this.op} ${right}`;
   }
 
   #needsParens(child: Condition): boolean {
-    return (child instanceof LogicalCondition && child.#op !== this.#op) ||
+    return (child instanceof LogicalCondition && child.op !== this.op) ||
       child instanceof RawCondition;
   }
 }
@@ -222,6 +256,8 @@ export function sourcesFrom(
   for (const v of sourceables) {
     if (v instanceof Condition) {
       for (const s of v.sources) set.add(s);
+    } else if (v instanceof ExpressionValue) {
+      for (const s of v.allSources) set.add(s);
     } else if (v.source) {
       set.add(v.source);
     }
@@ -237,4 +273,113 @@ function unionSources(
     for (const s of c.sources) set.add(s);
   }
   return set;
+}
+
+// --- ternary expression builders ---
+
+interface TernaryBranch {
+  condition: Condition;
+  value: TernaryValue;
+}
+
+function collectTernarySources(
+  branches: TernaryBranch[],
+): Set<ExpressionSource> {
+  const set = new Set<ExpressionSource>();
+  for (const { condition, value } of branches) {
+    for (const s of condition.sources) set.add(s);
+    if (value instanceof ExpressionValue) {
+      for (const s of value.allSources) set.add(s);
+    }
+  }
+  return set;
+}
+
+// whether a condition needs parentheses when used as `cond && value`
+function needsParensForTernary(condition: Condition): boolean {
+  return (condition instanceof LogicalCondition && condition.op === "||") ||
+    condition instanceof RawCondition;
+}
+
+function formatTernaryValue(value: TernaryValue): string {
+  if (value instanceof ExpressionValue) return value.expression;
+  return formatLiteral(value);
+}
+
+/**
+ * Intermediate builder after `.then(value)`. Call `.else()` to produce the
+ * final `ExpressionValue`, or `.elseIf()` to add another branch.
+ */
+export class ThenBuilder {
+  readonly #branches: TernaryBranch[];
+  readonly #sources: Set<ExpressionSource>;
+
+  constructor(
+    branches: TernaryBranch[],
+    sources: ReadonlySet<ExpressionSource>,
+  ) {
+    this.#branches = branches;
+    this.#sources = collectTernarySources(branches);
+    for (const s of sources) this.#sources.add(s);
+  }
+
+  /** Add another conditional branch. */
+  elseIf(condition: Condition): ElseIfBuilder {
+    return new ElseIfBuilder(this.#branches, this.#sources, condition);
+  }
+
+  /**
+   * Finalize the ternary with a default value.
+   *
+   * ```ts
+   * os.equals("linux").then("ubuntu-latest").else("macos-latest")
+   * // => matrix.os == 'linux' && 'ubuntu-latest' || 'macos-latest'
+   * ```
+   */
+  else(value: TernaryValue): ExpressionValue {
+    const sources = new Set(this.#sources);
+    if (value instanceof ExpressionValue) {
+      for (const s of value.allSources) sources.add(s);
+    }
+
+    const parts: string[] = [];
+    for (const { condition, value: val } of this.#branches) {
+      const condExpr = needsParensForTernary(condition)
+        ? `(${condition.toExpression()})`
+        : condition.toExpression();
+      parts.push(`${condExpr} && ${formatTernaryValue(val)}`);
+    }
+    parts.push(formatTernaryValue(value));
+
+    return new ExpressionValue(parts.join(" || "), sources);
+  }
+}
+
+/**
+ * Intermediate builder after `.elseIf(condition)`. Call `.then()` to provide
+ * the value for this branch.
+ */
+export class ElseIfBuilder {
+  readonly #branches: TernaryBranch[];
+  readonly #sources: Set<ExpressionSource>;
+  readonly #condition: Condition;
+
+  constructor(
+    branches: TernaryBranch[],
+    sources: Set<ExpressionSource>,
+    condition: Condition,
+  ) {
+    this.#branches = branches;
+    this.#sources = sources;
+    for (const s of condition.sources) this.#sources.add(s);
+    this.#condition = condition;
+  }
+
+  /** Provide the value for this branch. */
+  then(value: TernaryValue): ThenBuilder {
+    return new ThenBuilder(
+      [...this.#branches, { condition: this.#condition, value }],
+      this.#sources,
+    );
+  }
 }

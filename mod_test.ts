@@ -903,3 +903,178 @@ jobs:
 `,
   );
 });
+
+// --- ternary expressions ---
+
+Deno.test("simple ternary with .then().else()", () => {
+  setup();
+  const os = expr("matrix.os");
+  const runner = os.equals("linux").then("ubuntu-latest").else("macos-latest");
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", {
+    runsOn: runner,
+  }).withSteps(step({ name: "Build", run: "cargo build" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  build:
+    runs-on: '\${{ matrix.os == ''linux'' && ''ubuntu-latest'' || ''macos-latest'' }}'
+    steps:
+      - name: Build
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("ternary with elseIf chain", () => {
+  setup();
+  const os = expr("matrix.os");
+  const runner = os.equals("linux").then("ubuntu-latest")
+    .elseIf(os.equals("macos")).then("macos-latest")
+    .else("windows-latest");
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", {
+    runsOn: runner,
+  }).withSteps(step({ name: "Build", run: "cargo build" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  build:
+    runs-on: '\${{ matrix.os == ''linux'' && ''ubuntu-latest'' || matrix.os == ''macos'' && ''macos-latest'' || ''windows-latest'' }}'
+    steps:
+      - name: Build
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("ternary with ExpressionValue as value", () => {
+  setup();
+  const matrix = defineMatrix({
+    include: [
+      { os: "linux", runner: "ubuntu-latest" },
+      { os: "macos", runner: "macos-latest" },
+    ],
+  });
+  const result = matrix.os.equals("linux")
+    .then(matrix.runner)
+    .else("self-hosted");
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", {
+    runsOn: result,
+    strategy: { matrix },
+  }).withSteps(step({ name: "Build", run: "cargo build" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  build:
+    runs-on: '\${{ matrix.os == ''linux'' && matrix.runner || ''self-hosted'' }}'
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: macos
+            runner: macos-latest
+    steps:
+      - name: Build
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("ternary with || condition gets parenthesized", () => {
+  setup();
+  const os = expr("matrix.os");
+  const runner = os.equals("linux").or(os.equals("macos"))
+    .then("unix-runner")
+    .else("windows-runner");
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", {
+    runsOn: runner,
+  }).withSteps(step({ name: "Build", run: "cargo build" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  build:
+    runs-on: '\${{ (matrix.os == ''linux'' || matrix.os == ''macos'') && ''unix-runner'' || ''windows-runner'' }}'
+    steps:
+      - name: Build
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("ternary with job output infers needs", () => {
+  setup();
+  const checkStep = step({
+    id: "check",
+    name: "Check",
+    run: "echo 'env=prod' >> $GITHUB_OUTPUT",
+    outputs: ["env"],
+  });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  const preJob = wf.createJob("pre", {
+    runsOn: "ubuntu-latest",
+  }).withSteps(checkStep).withOutputs({
+    env: checkStep.outputs.env,
+  });
+
+  const runner = preJob.outputs.env.equals("prod")
+    .then("prod-runner")
+    .else("dev-runner");
+
+  wf.createJob("build", {
+    runsOn: runner,
+  }).withSteps(step({ name: "Build", run: "cargo build" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  pre:
+    runs-on: ubuntu-latest
+    outputs:
+      env: '\${{ steps.check.outputs.env }}'
+    steps:
+      - id: check
+        name: Check
+        run: echo 'env=prod' >> $GITHUB_OUTPUT
+  build:
+    needs:
+      - pre
+    runs-on: '\${{ needs.pre.outputs.env == ''prod'' && ''prod-runner'' || ''dev-runner'' }}'
+    steps:
+      - name: Build
+        run: cargo build
+`,
+  );
+});

@@ -68,6 +68,34 @@ const deploy = step({
 }).dependsOn(build);
 ```
 
+## Ternary expressions
+
+Build GitHub Actions ternary expressions (`condition && trueVal || falseVal`)
+with a fluent `.then().else()` chain:
+
+```ts
+const os = expr("matrix.os");
+
+// simple ternary
+const runner = os.equals("linux").then("ubuntu-latest").else("macos-latest");
+// => matrix.os == 'linux' && 'ubuntu-latest' || 'macos-latest'
+
+// multi-branch with elseIf
+const runner = os.equals("linux").then("ubuntu-latest")
+  .elseIf(os.equals("macos")).then("macos-latest")
+  .else("windows-latest");
+// => matrix.os == 'linux' && 'ubuntu-latest' || matrix.os == 'macos' && 'macos-latest' || 'windows-latest'
+
+// use in job config
+wf.createJob("build", {
+  runsOn: runner,
+}).withSteps(test);
+```
+
+Values can be strings, numbers, booleans, or `ExpressionValue` references.
+Conditions with `||` are automatically parenthesized to preserve correct
+evaluation order.
+
 ## Condition propagation
 
 Conditions on leaf steps automatically propagate backward to their
@@ -170,7 +198,7 @@ const matrix = defineMatrix({
   ],
 });
 
-matrix.os      // ExpressionValue("matrix.os") — autocompletes!
+matrix.os      // ExpressionValue("matrix.os") — autocompletes
 matrix.runner  // ExpressionValue("matrix.runner")
 matrix.foo     // TypeScript error — not a matrix key
 
