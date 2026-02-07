@@ -167,7 +167,8 @@ class LogicalCondition extends Condition {
   }
 
   #needsParens(child: Condition): boolean {
-    return child instanceof LogicalCondition && child.#op !== this.#op;
+    return (child instanceof LogicalCondition && child.#op !== this.#op) ||
+      child instanceof RawCondition;
   }
 }
 
@@ -185,6 +186,20 @@ class NotCondition extends Condition {
     // parenthesize compound inner expressions
     const needsParens = this.#inner instanceof LogicalCondition;
     return needsParens ? `!(${inner})` : `!${inner}`;
+  }
+}
+
+/** wraps a raw expression string as a Condition */
+export class RawCondition extends Condition {
+  readonly #expression: string;
+
+  constructor(expression: string, sources: ReadonlySet<ExpressionSource>) {
+    super(sources);
+    this.#expression = expression;
+  }
+
+  toExpression(): string {
+    return this.#expression;
   }
 }
 

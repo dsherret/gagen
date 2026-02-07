@@ -2,6 +2,8 @@ import {
   Condition,
   type ExpressionSource,
   ExpressionValue,
+  RawCondition,
+  sourcesFrom,
 } from "./expression.ts";
 
 export type ConditionLike = Condition | ExpressionValue | string;
@@ -66,7 +68,7 @@ export class Step<O extends string = never> implements ExpressionSource {
     return this;
   }
 
-  toYaml(): Record<string, unknown> {
+  toYaml(effectiveIf?: Condition): Record<string, unknown> {
     const result: Record<string, unknown> = {};
 
     // only include user-provided id
@@ -78,8 +80,9 @@ export class Step<O extends string = never> implements ExpressionSource {
       result.name = this.config.name;
     }
 
-    if (this.config.if != null) {
-      result.if = serializeConditionLike(this.config.if);
+    const ifCondition = effectiveIf ?? this.config.if;
+    if (ifCondition != null) {
+      result.if = serializeConditionLike(ifCondition);
     }
 
     if (this.config.uses != null) {
@@ -136,6 +139,14 @@ export function serializeConditionLike(c: ConditionLike): string {
   } else {
     return c;
   }
+}
+
+export function toCondition(c: ConditionLike): Condition {
+  if (c instanceof Condition) return c;
+  if (c instanceof ExpressionValue) {
+    return new RawCondition(c.expression, sourcesFrom(c));
+  }
+  return new RawCondition(c, new Set());
 }
 
 function serializeConfigValues(

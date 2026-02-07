@@ -8,6 +8,7 @@ import {
   type ConfigValue,
   serializeConditionLike,
   Step,
+  toCondition,
 } from "./step.ts";
 
 export interface JobConfig {
@@ -216,33 +217,154 @@ export class Job implements ExpressionSource {
 
     // steps
     const resolvedSteps = this.resolveSteps();
-    result.steps = resolvedSteps.map((s) => s.toYaml());
+    const effectiveConditions = computeEffectiveConditions(
+      resolvedSteps,
+      this.leafSteps,
+    );
+    result.steps = resolvedSteps.map((s) => s.toYaml(effectiveConditions.get(s)));
 
     return result;
   }
 }
 
-// --- topological sort ---
+// --- condition propagation ---
 
-function topoSort(steps: Set<Step<string>>): Step<string>[] {
-  // build in-degree map (only counting edges within our set)
-  const inDegree = new Map<Step<string>, number>();
-  for (const s of steps) {
-    if (!inDegree.has(s)) inDegree.set(s, 0);
+function computeEffectiveConditions(
+  sortedSteps: Step<string>[],
+  leafSteps: Step<string>[],
+): Map<Step<string>, Condition | undefined> {
+  const posMap = new Map<Step<string>, number>();
+  for (let i = 0; i < sortedSteps.length; i++) {
+    posMap.set(sortedSteps[i], i);
+  }
+
+  // build dependents map: for each step, which steps depend on it
+  const dependents = new Map<Step<string>, Set<Step<string>>>();
+  const addDependent = (dep: Step<string>, s: Step<string>) => {
+    let set = dependents.get(dep);
+    if (!set) {
+      set = new Set();
+      dependents.set(dep, set);
+    }
+    set.add(s);
+  };
+  for (const s of sortedSteps) {
     for (const dep of s.dependencies) {
-      if (steps.has(dep)) {
-        // dep is a prerequisite of s, so s has an incoming edge from dep
-        inDegree.set(s, (inDegree.get(s) ?? 0) + 1);
+      if (posMap.has(dep)) {
+        addDependent(dep, s);
       }
     }
-    // also count condition-inferred deps
+    // condition-inferred dependencies (matches topo sort edges)
     if (s.config.if instanceof Condition) {
       for (const source of s.config.if.sources) {
-        if (source instanceof Step && steps.has(source as Step<string>)) {
-          inDegree.set(s, (inDegree.get(s) ?? 0) + 1);
+        if (source instanceof Step && posMap.has(source as Step<string>)) {
+          addDependent(source as Step<string>, s);
         }
       }
     }
+  }
+
+  // steps explicitly passed to withSteps should not receive propagated
+  // conditions — the user declared them directly, so they keep their own if
+  const leafSet = new Set<Step<string>>(leafSteps);
+
+  // compute effective conditions in reverse topo order
+  const effective = new Map<Step<string>, Condition | undefined>();
+
+  for (let i = sortedSteps.length - 1; i >= 0; i--) {
+    const s = sortedSteps[i];
+    const ownIf = s.config.if != null ? toCondition(s.config.if) : undefined;
+
+    if (leafSet.has(s)) {
+      // explicitly added by user — no propagation
+      effective.set(s, ownIf);
+      continue;
+    }
+
+    const deps = dependents.get(s);
+    if (!deps || deps.size === 0) {
+      effective.set(s, ownIf);
+      continue;
+    }
+
+    // compute propagated condition from dependents
+    let propagated: Condition | undefined = undefined;
+    let mustAlwaysRun = false;
+
+    for (const d of deps) {
+      const dEffective = effective.get(d);
+
+      if (dEffective == null) {
+        // dependent has no effective condition — step must always run
+        mustAlwaysRun = true;
+        break;
+      }
+
+      // check if the condition can propagate to this position
+      if (!canPropagateTo(dEffective, i, posMap)) {
+        // condition references steps at or after this position
+        mustAlwaysRun = true;
+        break;
+      }
+
+      if (propagated === undefined) {
+        propagated = dEffective;
+      } else {
+        propagated = propagated.or(dEffective);
+      }
+    }
+
+    if (mustAlwaysRun) {
+      effective.set(s, ownIf);
+    } else if (propagated != null && ownIf != null) {
+      effective.set(s, propagated.and(ownIf));
+    } else {
+      effective.set(s, propagated ?? ownIf);
+    }
+  }
+
+  return effective;
+}
+
+// a condition can propagate backward to a step at targetPos only if none of
+// the condition's Step sources are at or after that position
+function canPropagateTo(
+  condition: Condition,
+  targetPos: number,
+  posMap: Map<Step<string>, number>,
+): boolean {
+  for (const source of condition.sources) {
+    if (source instanceof Step) {
+      const pos = posMap.get(source as Step<string>);
+      if (pos !== undefined && pos >= targetPos) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// --- topological sort ---
+
+function topoSort(steps: Set<Step<string>>): Step<string>[] {
+  // build in-degree map (only counting unique predecessors within our set)
+  const inDegree = new Map<Step<string>, number>();
+  for (const s of steps) {
+    const predecessors = new Set<Step<string>>();
+    for (const dep of s.dependencies) {
+      if (steps.has(dep)) {
+        predecessors.add(dep);
+      }
+    }
+    // also count condition-inferred deps (deduplicated via Set)
+    if (s.config.if instanceof Condition) {
+      for (const source of s.config.if.sources) {
+        if (source instanceof Step && steps.has(source as Step<string>)) {
+          predecessors.add(source as Step<string>);
+        }
+      }
+    }
+    inDegree.set(s, predecessors.size);
   }
 
   // kahn's algorithm — process in insertion order for stability

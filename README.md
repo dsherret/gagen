@@ -68,6 +68,51 @@ const deploy = step({
 }).dependsOn(build);
 ```
 
+## Condition propagation
+
+Conditions on leaf steps automatically propagate backward to their
+dependencies. This avoids running expensive setup steps when they aren't
+needed:
+
+```ts
+const checkout = step({ uses: "actions/checkout@v6" });
+const build = step({ run: "cargo build" }).dependsOn(checkout);
+const test = step({
+  run: "cargo test",
+  if: new ExpressionValue("matrix.job").equals("test"),
+}).dependsOn(build);
+
+// only test is passed — checkout and build inherit its condition
+wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test);
+// all three steps get: if: matrix.job == 'test'
+```
+
+When multiple leaf steps have different conditions, dependencies get the
+OR of those conditions:
+
+```ts
+const test = step({ run: "cargo test", if: jobExpr.equals("test") }).dependsOn(checkout);
+const bench = step({ run: "cargo bench", if: jobExpr.equals("bench") }).dependsOn(checkout);
+
+wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test, bench);
+// checkout gets: if: matrix.job == 'test' || matrix.job == 'bench'
+```
+
+To prevent propagation, pass the unconditional steps to `withSteps()` as
+well. Leaf steps act as propagation barriers:
+
+```ts
+const build = step({ run: "cargo build" }).dependsOn(checkout);
+const test = step({ run: "cargo test" }).dependsOn(build);
+const linuxOnly = step({
+  run: "linux-specific",
+  if: os.equals("linux"),
+}).dependsOn(build, test);
+
+// test is a leaf with no condition — blocks propagation to build and checkout
+wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test, linuxOnly);
+```
+
 ## Step outputs and job dependencies
 
 Steps can declare outputs. When a job references another job's outputs, the
