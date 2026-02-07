@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import { createWorkflow, ExpressionValue, step } from "./mod.ts";
+import { createWorkflow, expr, step } from "./mod.ts";
 import { resetStepCounter } from "./step.ts";
 
 // reset step counter between tests for deterministic ids
@@ -140,7 +140,7 @@ Deno.test("step with if condition appears in YAML", () => {
   const s = step({
     name: "Conditional step",
     run: "echo hi",
-    if: new ExpressionValue("matrix.os").equals("linux"),
+    if: expr("matrix.os").equals("linux"),
   });
 
   const wf = createWorkflow({ name: "test", on: {} });
@@ -394,7 +394,7 @@ jobs:
 
 Deno.test("step with ExpressionValue in with field", () => {
   setup();
-  const ev = new ExpressionValue("secrets.GITHUB_TOKEN");
+  const ev = expr("secrets.GITHUB_TOKEN");
   const s = step({
     name: "Deploy",
     uses: "actions/deploy@v1",
@@ -527,7 +527,7 @@ Deno.test("condition propagates from leaf to dependencies", () => {
   const test = step({
     name: "Test",
     run: "cargo test",
-    if: new ExpressionValue("matrix.job").equals("test"),
+    if: expr("matrix.job").equals("test"),
   }).dependsOn(build);
 
   const wf = createWorkflow({ name: "test", on: {} });
@@ -562,12 +562,12 @@ Deno.test("conditions OR'd when multiple dependents", () => {
   const test = step({
     name: "Test",
     run: "cargo test",
-    if: new ExpressionValue("matrix.job").equals("test"),
+    if: expr("matrix.job").equals("test"),
   }).dependsOn(checkout);
   const bench = step({
     name: "Bench",
     run: "cargo bench",
-    if: new ExpressionValue("matrix.job").equals("bench"),
+    if: expr("matrix.job").equals("bench"),
   }).dependsOn(checkout);
 
   const wf = createWorkflow({ name: "test", on: {} });
@@ -602,7 +602,7 @@ Deno.test("no propagation when a dependent has no condition", () => {
   const test = step({
     name: "Test",
     run: "cargo test",
-    if: new ExpressionValue("matrix.job").equals("test"),
+    if: expr("matrix.job").equals("test"),
   }).dependsOn(checkout);
   const lint = step({
     name: "Lint",
@@ -679,12 +679,12 @@ Deno.test("propagated condition ANDed with own if", () => {
   const build = step({
     name: "Build",
     run: "cargo build",
-    if: new ExpressionValue("matrix.profile").equals("release"),
+    if: expr("matrix.profile").equals("release"),
   }).dependsOn(checkout);
   const test = step({
     name: "Test",
     run: "cargo test",
-    if: new ExpressionValue("matrix.job").equals("test"),
+    if: expr("matrix.job").equals("test"),
   }).dependsOn(build);
 
   const wf = createWorkflow({ name: "test", on: {} });
@@ -721,7 +721,7 @@ Deno.test("unconditional leaf blocks propagation to shared deps", () => {
   const linuxOnly = step({
     name: "Linux only",
     run: "linux-specific",
-    if: new ExpressionValue("matrix.os").equals("linux"),
+    if: expr("matrix.os").equals("linux"),
   }).dependsOn(build, test);
 
   const wf = createWorkflow({ name: "test", on: {} });
@@ -754,11 +754,11 @@ Deno.test("leaf steps passed to withSteps do not get propagation", () => {
   setup();
   const a = step({
     name: "A",
-    if: new ExpressionValue("matrix.os").equals("linux"),
+    if: expr("matrix.os").equals("linux"),
   });
   const b = step({
     name: "B",
-    if: new ExpressionValue("matrix.job").equals("test"),
+    if: expr("matrix.job").equals("test"),
   }).dependsOn(a);
 
   const wf = createWorkflow({ name: "test", on: {} });

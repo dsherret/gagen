@@ -44,10 +44,10 @@ then test.
 Build type-safe GitHub Actions expressions with a fluent API:
 
 ```ts
-import { ExpressionValue } from "jsr:@david/ci-yml-generator@<version>";
+import { expr } from "jsr:@david/ci-yml-generator@<version>";
 
-const ref = new ExpressionValue("github.ref");
-const os = new ExpressionValue("matrix.os");
+const ref = expr("github.ref");
+const os = expr("matrix.os");
 
 // simple comparisons
 ref.equals("refs/heads/main");
@@ -79,11 +79,11 @@ const checkout = step({ uses: "actions/checkout@v6" });
 const build = step({ run: "cargo build" }).dependsOn(checkout);
 const test = step({
   run: "cargo test",
-  if: new ExpressionValue("matrix.job").equals("test"),
+  if: expr("matrix.job").equals("test"),
 }).dependsOn(build);
 
 // only test is passed — checkout and build inherit its condition
-wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test);
+wf.createJob("test", { runsOn: "ubuntu-latest" }).withSteps(test);
 // all three steps get: if: matrix.job == 'test'
 ```
 
@@ -94,7 +94,7 @@ OR of those conditions:
 const test = step({ run: "cargo test", if: jobExpr.equals("test") }).dependsOn(checkout);
 const bench = step({ run: "cargo bench", if: jobExpr.equals("bench") }).dependsOn(checkout);
 
-wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test, bench);
+wf.createJob("test", { runsOn: "ubuntu-latest" }).withSteps(test, bench);
 // checkout gets: if: matrix.job == 'test' || matrix.job == 'bench'
 ```
 
@@ -110,7 +110,7 @@ const linuxOnly = step({
 }).dependsOn(build, test);
 
 // test is a leaf with no condition — blocks propagation to build and checkout
-wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test, linuxOnly);
+wf.createJob("test", { runsOn: "ubuntu-latest" }).withSteps(test, linuxOnly);
 ```
 
 ## Step outputs and job dependencies
@@ -186,7 +186,7 @@ step({
   name: "Deploy",
   id: "deploy",
   uses: "actions/deploy@v1",
-  with: { token: new ExpressionValue("secrets.GITHUB_TOKEN") },
+  with: { token: "${{ secrets.GITHUB_TOKEN }}" },
   env: { NODE_ENV: "production" },
   if: "github.ref == 'refs/heads/main'",
   shell: "bash",

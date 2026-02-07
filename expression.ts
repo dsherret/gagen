@@ -203,6 +203,11 @@ export class RawCondition extends Condition {
   }
 }
 
+/** Creates an ExpressionValue from a raw expression string. */
+export function expr(expression: string): ExpressionValue {
+  return new ExpressionValue(expression);
+}
+
 // --- helpers ---
 
 export function formatLiteral(value: string | number | boolean): string {
