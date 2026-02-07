@@ -68,6 +68,45 @@ const deploy = step({
 }).dependsOn(build);
 ```
 
+## Common conditions
+
+The `conditions` object provides composable helpers for common GitHub Actions
+patterns:
+
+```ts
+import { conditions } from "jsr:@david/ci-yml-generator@<version>";
+
+const { status, isTag, isBranch, isEvent } = conditions;
+
+// status check functions
+status.always()    // always()
+status.failure()   // failure()
+status.success()   // success()
+status.cancelled() // cancelled()
+
+// ref checks
+isTag()            // startsWith(github.ref, 'refs/tags/')
+isTag("v1.0.0")   // github.ref == 'refs/tags/v1.0.0'
+isBranch("main")   // github.ref == 'refs/heads/main'
+
+// event checks
+isEvent("push")           // github.event_name == 'push'
+isEvent("pull_request")   // github.event_name == 'pull_request'
+
+// compose freely with .and() / .or() / .not()
+const deploy = step({
+  name: "Deploy",
+  run: "deploy.sh",
+  if: isBranch("main").and(isEvent("push")),
+}).dependsOn(build);
+
+const cleanup = step({
+  name: "Cleanup",
+  run: "rm -rf dist",
+  if: status.always(),
+}).dependsOn(build);
+```
+
 ## Ternary expressions
 
 Build GitHub Actions ternary expressions (`condition && trueVal || falseVal`)

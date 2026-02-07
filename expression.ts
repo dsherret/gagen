@@ -242,6 +242,75 @@ export function expr(expression: string): ExpressionValue {
   return new ExpressionValue(expression);
 }
 
+/** Common condition helpers for GitHub Actions workflows. */
+export const conditions = {
+  /** Status check functions for use in step/job `if` fields. */
+  status: {
+    /** Run regardless of previous step outcome. */
+    always: (): Condition =>
+      new FunctionCallCondition("always", [], EMPTY_SOURCES),
+    /** Run only when all previous steps succeeded (default behavior). */
+    success: (): Condition =>
+      new FunctionCallCondition("success", [], EMPTY_SOURCES),
+    /** Run only when a previous step has failed. */
+    failure: (): Condition =>
+      new FunctionCallCondition("failure", [], EMPTY_SOURCES),
+    /** Run only when the workflow was cancelled. */
+    cancelled: (): Condition =>
+      new FunctionCallCondition("cancelled", [], EMPTY_SOURCES),
+  },
+  /**
+   * Check if the ref is a tag. Without arguments, matches any tag.
+   * With a tag name, matches that specific tag.
+   *
+   * ```ts
+   * conditions.isTag()          // startsWith(github.ref, 'refs/tags/')
+   * conditions.isTag("v1.0.0")  // github.ref == 'refs/tags/v1.0.0'
+   * ```
+   */
+  isTag: (tag?: string): Condition =>
+    tag != null
+      ? new ComparisonCondition(
+        "github.ref",
+        "==",
+        `refs/tags/${tag}`,
+        EMPTY_SOURCES,
+      )
+      : new FunctionCallCondition(
+        "startsWith",
+        ["github.ref", "'refs/tags/'"],
+        EMPTY_SOURCES,
+      ),
+  /**
+   * Check if the ref is a specific branch.
+   *
+   * ```ts
+   * conditions.isBranch("main")  // github.ref == 'refs/heads/main'
+   * ```
+   */
+  isBranch: (branch: string): Condition =>
+    new ComparisonCondition(
+      "github.ref",
+      "==",
+      `refs/heads/${branch}`,
+      EMPTY_SOURCES,
+    ),
+  /**
+   * Check the event that triggered the workflow.
+   *
+   * ```ts
+   * conditions.isEvent("pull_request")  // github.event_name == 'pull_request'
+   * ```
+   */
+  isEvent: (event: string): Condition =>
+    new ComparisonCondition(
+      "github.event_name",
+      "==",
+      event,
+      EMPTY_SOURCES,
+    ),
+} as const;
+
 // --- helpers ---
 
 export function formatLiteral(value: string | number | boolean): string {

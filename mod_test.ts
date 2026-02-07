@@ -1,6 +1,8 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import { createWorkflow, defineMatrix, expr, step } from "./mod.ts";
+import { conditions, createWorkflow, defineMatrix, expr, step } from "./mod.ts";
 import { resetStepCounter } from "./step.ts";
+
+const { status, isTag, isBranch, isEvent } = conditions;
 
 // reset step counter between tests for deterministic ids
 function setup() {
@@ -1075,6 +1077,215 @@ jobs:
     steps:
       - name: Build
         run: cargo build
+`,
+  );
+});
+
+// --- status check functions ---
+
+Deno.test("status.always() in step if", () => {
+  setup();
+  const build = step({ name: "Build", run: "cargo build" });
+  const cleanup = step({
+    name: "Cleanup",
+    run: "rm -rf target",
+    if: status.always(),
+  }).dependsOn(build);
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  // build passed as leaf to block propagation of always()
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(build, cleanup);
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: cargo build
+      - name: Cleanup
+        if: always()
+        run: rm -rf target
+`,
+  );
+});
+
+Deno.test("status.failure() composed with condition", () => {
+  setup();
+  const os = expr("matrix.os");
+  const build = step({ name: "Build", run: "cargo build" });
+  const notify = step({
+    name: "Notify",
+    run: "curl ...",
+    if: status.failure().and(os.equals("linux")),
+  }).dependsOn(build);
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  // build passed as leaf to block propagation of failure()
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(build, notify);
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: cargo build
+      - name: Notify
+        if: failure() && matrix.os == 'linux'
+        run: curl ...
+`,
+  );
+});
+
+// --- common condition helpers ---
+
+Deno.test("conditions.isTag() matches any tag", () => {
+  setup();
+  const s = step({
+    name: "Publish",
+    run: "cargo publish",
+    if: isTag(),
+  });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish
+        if: 'startsWith(github.ref, ''refs/tags/'')'
+        run: cargo publish
+`,
+  );
+});
+
+Deno.test("conditions.isTag(name) matches specific tag", () => {
+  setup();
+  const s = step({
+    name: "Release",
+    run: "make release",
+    if: isTag("v1.0.0"),
+  });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release
+        if: github.ref == 'refs/tags/v1.0.0'
+        run: make release
+`,
+  );
+});
+
+Deno.test("conditions.isBranch(name) matches specific branch", () => {
+  setup();
+  const s = step({
+    name: "Deploy",
+    run: "deploy.sh",
+    if: isBranch("main"),
+  });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        if: github.ref == 'refs/heads/main'
+        run: deploy.sh
+`,
+  );
+});
+
+Deno.test("conditions.isEvent(name) matches event type", () => {
+  setup();
+  const s = step({
+    name: "Comment",
+    run: "echo PR",
+    if: isEvent("pull_request"),
+  });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment
+        if: github.event_name == 'pull_request'
+        run: echo PR
+`,
+  );
+});
+
+Deno.test("conditions compose with .and()", () => {
+  setup();
+  const s = step({
+    name: "Deploy",
+    run: "deploy.sh",
+    if: isBranch("main").and(isEvent("push")),
+  });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: deploy.sh
 `,
   );
 });
