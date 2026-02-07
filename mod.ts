@@ -6,3 +6,4 @@ export { createWorkflow, Workflow } from "./workflow.ts";
 export type { WorkflowConfig, WorkflowTriggers } from "./workflow.ts";
 export { Condition, expr, ExpressionValue } from "./expression.ts";
 export type { ExpressionSource } from "./expression.ts";
+export { defineMatrix, Matrix } from "./matrix.ts";

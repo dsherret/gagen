@@ -3,6 +3,7 @@ import {
   type ExpressionSource,
   ExpressionValue,
 } from "./expression.ts";
+import { Matrix } from "./matrix.ts";
 import {
   type ConditionLike,
   type ConfigValue,
@@ -182,7 +183,9 @@ export class Job implements ExpressionSource {
     if (this.config.strategy != null) {
       const s: Record<string, unknown> = {};
       if (this.config.strategy.matrix != null) {
-        s.matrix = this.config.strategy.matrix;
+        s.matrix = this.config.strategy.matrix instanceof Matrix
+          ? this.config.strategy.matrix.toYaml()
+          : this.config.strategy.matrix;
       }
       if (this.config.strategy.failFast != null) {
         const ff = this.config.strategy.failFast;

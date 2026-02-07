@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import { createWorkflow, expr, step } from "./mod.ts";
+import { createWorkflow, defineMatrix, expr, step } from "./mod.ts";
 import { resetStepCounter } from "./step.ts";
 
 // reset step counter between tests for deterministic ids
@@ -779,6 +779,127 @@ jobs:
         if: matrix.os == 'linux'
       - name: B
         if: matrix.job == 'test'
+`,
+  );
+});
+
+// --- typed matrix ---
+
+Deno.test("defineMatrix with include serializes and provides typed expressions", () => {
+  setup();
+  const matrix = defineMatrix({
+    include: [
+      { os: "linux", runner: "ubuntu-latest" },
+      { os: "macos", runner: "macos-latest" },
+    ],
+  });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", {
+    runsOn: matrix.runner,
+    strategy: { matrix },
+  }).withSteps(step({ name: "Build", run: "cargo build" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  build:
+    runs-on: '\${{ matrix.runner }}'
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: macos
+            runner: macos-latest
+    steps:
+      - name: Build
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("defineMatrix with key-value arrays", () => {
+  setup();
+  const matrix = defineMatrix({
+    os: ["linux", "macos"],
+    node: [18, 20],
+  });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", {
+    runsOn: "ubuntu-latest",
+    strategy: { matrix, failFast: false },
+  }).withSteps(step({ name: "Build", run: "cargo build" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+          - linux
+          - macos
+        node:
+          - 18
+          - 20
+      fail-fast: false
+    steps:
+      - name: Build
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("matrix expressions work in step conditions", () => {
+  setup();
+  const matrix = defineMatrix({
+    os: ["linux", "macos"],
+  });
+  const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
+  const linuxStep = step({
+    name: "Linux only",
+    run: "linux-specific",
+    if: matrix.os.equals("linux"),
+  }).dependsOn(checkout);
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", {
+    runsOn: "ubuntu-latest",
+    strategy: { matrix },
+  }).withSteps(linuxStep);
+
+  assertEquals(
+    wf.toYamlString(),
+    `# GENERATED -- DO NOT DIRECTLY EDIT
+
+name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+          - linux
+          - macos
+    steps:
+      - name: Checkout
+        if: matrix.os == 'linux'
+        uses: actions/checkout@v6
+      - name: Linux only
+        if: matrix.os == 'linux'
+        run: linux-specific
 `,
   );
 });

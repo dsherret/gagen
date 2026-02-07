@@ -156,26 +156,60 @@ wf.createJob("ci", { runsOn: "ubuntu-latest" }).withSteps(integrate);
 // checkout appears only once
 ```
 
+## Typed matrix
+
+`defineMatrix()` gives you typed access to matrix values:
+
+```ts
+import { defineMatrix } from "jsr:@david/ci-yml-generator@<version>";
+
+const matrix = defineMatrix({
+  include: [
+    { os: "linux", runner: "ubuntu-latest" },
+    { os: "macos", runner: "macos-latest" },
+  ],
+});
+
+matrix.os      // ExpressionValue("matrix.os") — autocompletes!
+matrix.runner  // ExpressionValue("matrix.runner")
+matrix.foo     // TypeScript error — not a matrix key
+
+wf.createJob("build", {
+  runsOn: matrix.runner,
+  strategy: { matrix },
+}).withSteps(test);
+```
+
+Also works with key-value arrays:
+
+```ts
+const matrix = defineMatrix({
+  os: ["linux", "macos"],
+  node: [18, 20],
+});
+
+matrix.os.equals("linux")  // condition for use in step `if`
+```
+
 ## Job configuration
 
 ```ts
+const matrix = defineMatrix({
+  include: [
+    { os: "linux", runner: "ubuntu-latest" },
+    { os: "macos", runner: "macos-latest" },
+  ],
+});
+
 wf.createJob("build", {
-  name: "Build ${{ matrix.os }}",
-  runsOn: "ubuntu-latest",
+  name: "Build",
+  runsOn: matrix.runner,
   timeoutMinutes: 60,
   defaults: { run: { shell: "bash" } },
   env: { CARGO_TERM_COLOR: "always" },
   permissions: { contents: "read" },
   concurrency: { group: "build-${{ github.ref }}", cancelInProgress: true },
-  strategy: {
-    matrix: {
-      include: [
-        { os: "linux", runner: "ubuntu-latest" },
-        { os: "macos", runner: "macos-latest" },
-      ],
-    },
-    failFast: true,
-  },
+  strategy: { matrix, failFast: true },
 }).withSteps(test);
 ```
 
