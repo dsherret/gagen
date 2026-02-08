@@ -1,4 +1,4 @@
-import { stringify } from "@std/yaml/stringify";
+import { stringify } from "jsr:@std/yaml/stringify";
 import { ExpressionValue } from "./expression.ts";
 import { Job, type JobConfig } from "./job.ts";
 import type { ConfigValue } from "./step.ts";
@@ -31,7 +31,7 @@ export interface WorkflowConfig {
 
 export class Workflow {
   readonly config: WorkflowConfig;
-  readonly jobs = new Map<string, Job>();
+  readonly jobs: Map<string, Job> = new Map<string, Job>();
 
   constructor(config: WorkflowConfig) {
     this.config = config;
@@ -46,7 +46,7 @@ export class Workflow {
     return job;
   }
 
-  toYamlString(): string {
+  toYamlString(options?: { header?: string }): string {
     const obj: Record<string, unknown> = {};
 
     obj.name = this.config.name;
@@ -84,17 +84,18 @@ export class Workflow {
     }
     obj.jobs = jobs;
 
-    let yaml = stringify(obj, {
+    const yaml = stringify(obj, {
       useAnchors: false,
       lineWidth: 10_000,
       compatMode: false,
     });
 
-    return `# GENERATED -- DO NOT DIRECTLY EDIT\n\n${yaml}`;
+    const header = options?.header;
+    return header ? `${header}\n\n${yaml}` : yaml;
   }
 
-  writeToFile(path: string | URL): void {
-    Deno.writeTextFileSync(path, this.toYamlString());
+  writeToFile(path: string | URL, options?: { header?: string }): void {
+    Deno.writeTextFileSync(path, this.toYamlString(options));
   }
 }
 

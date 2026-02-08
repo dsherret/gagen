@@ -116,6 +116,24 @@ export abstract class Condition {
     return new ThenBuilder([{ condition: this, value }], this.sources);
   }
 
+  /**
+   * Returns the flat AND terms of this condition. Used by condition
+   * simplification to detect absorption (A || A && B → A).
+   */
+  getAndTerms(): string[] {
+    return [this.toExpression()];
+  }
+
+  /** returns the flat AND children of this condition as Condition objects */
+  flattenAnd(): Condition[] {
+    return [this];
+  }
+
+  /** returns the flat OR children of this condition as Condition objects */
+  flattenOr(): Condition[] {
+    return [this];
+  }
+
   /** render without `${{ }}` wrapping */
   abstract toExpression(): string;
 
@@ -189,6 +207,27 @@ class LogicalCondition extends Condition {
     this.#right = right;
   }
 
+  override getAndTerms(): string[] {
+    if (this.op === "&&") {
+      return [...this.#left.getAndTerms(), ...this.#right.getAndTerms()];
+    }
+    return [this.toExpression()];
+  }
+
+  override flattenAnd(): Condition[] {
+    if (this.op === "&&") {
+      return [...this.#left.flattenAnd(), ...this.#right.flattenAnd()];
+    }
+    return [this];
+  }
+
+  override flattenOr(): Condition[] {
+    if (this.op === "||") {
+      return [...this.#left.flattenOr(), ...this.#right.flattenOr()];
+    }
+    return [this];
+  }
+
   toExpression(): string {
     // parenthesize children that use a different operator to avoid ambiguity
     const left = this.#needsParens(this.#left)
@@ -217,8 +256,10 @@ class NotCondition extends Condition {
 
   toExpression(): string {
     const inner = this.#inner.toExpression();
-    // parenthesize compound inner expressions
-    const needsParens = this.#inner instanceof LogicalCondition;
+    // parenthesize compound inner expressions (comparisons need parens
+    // because `!` has higher precedence than `==`/`!=` in GitHub Actions)
+    const needsParens = this.#inner instanceof LogicalCondition ||
+      this.#inner instanceof ComparisonCondition;
     return needsParens ? `!(${inner})` : `!${inner}`;
   }
 }

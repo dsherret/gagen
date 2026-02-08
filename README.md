@@ -1,6 +1,6 @@
 # `jsr:@david/ci-yml-generator`
 
-Generates GitHub Actions YAML files using a declarative API.
+Generate complex GitHub Actions YAML files using a declarative API.
 
 ## Basic usage
 
