@@ -63,7 +63,10 @@ Deno.test("ExpressionValue equals with string", () => {
 
 Deno.test("ExpressionValue notEquals with string", () => {
   const v = new ExpressionValue("matrix.profile");
-  assertEquals(v.notEquals("debug").toExpression(), "matrix.profile != 'debug'");
+  assertEquals(
+    v.notEquals("debug").toExpression(),
+    "matrix.profile != 'debug'",
+  );
 });
 
 Deno.test("ExpressionValue equals with number", () => {
@@ -103,7 +106,9 @@ Deno.test("ExpressionValue chaining startsWith().not()", () => {
 Deno.test("ExpressionValue chaining or().and() from values", () => {
   const os = new ExpressionValue("matrix.os");
   const profile = new ExpressionValue("matrix.profile");
-  const c = os.equals("linux").or(os.equals("macos")).and(profile.equals("release"));
+  const c = os.equals("linux").or(os.equals("macos")).and(
+    profile.equals("release"),
+  );
   assertEquals(
     c.toExpression(),
     "(matrix.os == 'linux' || matrix.os == 'macos') && matrix.profile == 'release'",
@@ -168,11 +173,17 @@ Deno.test("ExpressionValue sourced and ambient mixed", () => {
 // --- Condition: toExpression ---
 
 Deno.test("ComparisonCondition == with string", () => {
-  assertEquals(cmp("matrix.os", "linux").toExpression(), "matrix.os == 'linux'");
+  assertEquals(
+    cmp("matrix.os", "linux").toExpression(),
+    "matrix.os == 'linux'",
+  );
 });
 
 Deno.test("ComparisonCondition != with string", () => {
-  assertEquals(neq("matrix.os", "linux").toExpression(), "matrix.os != 'linux'");
+  assertEquals(
+    neq("matrix.os", "linux").toExpression(),
+    "matrix.os != 'linux'",
+  );
 });
 
 Deno.test("ComparisonCondition == with number", () => {

@@ -21,9 +21,11 @@ export class Matrix<_K extends string> {
   }
 }
 
-type MatrixWithExprs<K extends string> = Matrix<K> & {
-  readonly [P in K]: ExpressionValue;
-};
+type MatrixWithExprs<K extends string> =
+  & Matrix<K>
+  & {
+    readonly [P in K]: ExpressionValue;
+  };
 
 export function defineMatrix<const T extends Record<string, unknown>>(
   def: T,

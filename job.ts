@@ -323,9 +323,7 @@ export class Job implements ExpressionSource {
     if (this.config.env != null) {
       const env: Record<string, string | number | boolean> = {};
       for (const [key, value] of Object.entries(this.config.env)) {
-        env[key] = value instanceof ExpressionValue
-          ? value.toString()
-          : value;
+        env[key] = value instanceof ExpressionValue ? value.toString() : value;
       }
       result.env = env;
     }
@@ -925,9 +923,7 @@ function serializeEnvironment(
   if (typeof env === "string") return env;
   if (env instanceof ExpressionValue) return env.toString();
   const result: Record<string, unknown> = {
-    name: env.name instanceof ExpressionValue
-      ? env.name.toString()
-      : env.name,
+    name: env.name instanceof ExpressionValue ? env.name.toString() : env.name,
   };
   if (env.url != null) result.url = env.url;
   return result;

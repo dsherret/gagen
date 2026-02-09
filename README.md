@@ -1,37 +1,53 @@
-# `jsr:@david/ci-yml-generator`
+# `jsr:@david/gagen`
 
 Generate complex GitHub Actions YAML files using a declarative API.
+
+## Why?
+
+1. Logic for GitHub actions can sometimes get out of hand. If you have a series
+   of steps to conditionally run, it's easier to define that once on the leaf
+   node.
+2. Having type checking between steps is useful.
 
 ## Basic usage
 
 ```ts
 #!/usr/bin/env -S deno run --allow-read=ci.yml --allow-write=ci.yml
-import { createWorkflow, step } from "jsr:@david/ci-yml-generator@<version>";
+import { conditions, createWorkflow, step } from "jsr:@david/gagen@<version>";
 
 const checkout = step({
-  name: "Clone repository",
   uses: "actions/checkout@v6",
 });
-
-const build = step({
-  name: "Build",
-  run: "cargo build",
-}).dependsOn(checkout);
 
 const test = step({
   name: "Test",
   run: "cargo test",
-}).dependsOn(build);
+}).dependsOn(checkout);
+
+const installDeno = step({
+  uses: "denoland/setup-deno@v2"
+})
+
+const lint = steps(
+  {
+    name: "Clippy",
+    run: "cargo clippy",
+  },
+  step({
+    name: "Deno Lint,
+    run: "deno lint",
+  }).dependsOn(installDeno),
+).if(conditions.isBranch("main").not()).dependsOn(checkout);
 
 const wf = createWorkflow({
   name: "ci",
   on: { push: { branches: ["main"] } },
 });
 
-// only specify the leaf step — checkout and build are pulled in automatically
+  // only specify the leaf step — checkout and build are pulled in automatically
 wf.createJob("build", {
   runsOn: "ubuntu-latest",
-}).withSteps(test);
+}).withSteps(test, lint);
 
 wf.writeOrLint({
   filePath: new URL("./ci.yml", import.meta.url),
@@ -39,8 +55,8 @@ wf.writeOrLint({
 });
 ```
 
-This generates a `ci.yml` with steps in the correct order: checkout, build,
-then test.
+This generates a `ci.yml` with steps in the correct order: checkout, build, then
+test.
 
 When run normally, this writes `ci.yml`. When run with `--lint`, it reads the
 existing file and compares the parsed YAML — exiting with a non-zero code if
@@ -57,7 +73,7 @@ date:
 Build type-safe GitHub Actions expressions with a fluent API:
 
 ```ts
-import { expr } from "jsr:@david/ci-yml-generator@<version>";
+import { expr } from "jsr:@david/gagen@<version>";
 
 const ref = expr("github.ref");
 const os = expr("matrix.os");
@@ -87,24 +103,24 @@ The `conditions` object provides composable helpers for common GitHub Actions
 patterns:
 
 ```ts
-import { conditions } from "jsr:@david/ci-yml-generator@<version>";
+import { conditions } from "jsr:@david/gagen@<version>";
 
 const { status, isTag, isBranch, isEvent } = conditions;
 
 // status check functions
-status.always()    // always()
-status.failure()   // failure()
-status.success()   // success()
-status.cancelled() // cancelled()
+status.always(); // always()
+status.failure(); // failure()
+status.success(); // success()
+status.cancelled(); // cancelled()
 
 // ref checks
-isTag()            // startsWith(github.ref, 'refs/tags/')
-isTag("v1.0.0")   // github.ref == 'refs/tags/v1.0.0'
-isBranch("main")   // github.ref == 'refs/heads/main'
+isTag(); // startsWith(github.ref, 'refs/tags/')
+isTag("v1.0.0"); // github.ref == 'refs/tags/v1.0.0'
+isBranch("main"); // github.ref == 'refs/heads/main'
 
 // event checks
-isEvent("push")           // github.event_name == 'push'
-isEvent("pull_request")   // github.event_name == 'pull_request'
+isEvent("push"); // github.event_name == 'push'
+isEvent("pull_request"); // github.event_name == 'pull_request'
 
 // compose freely with .and() / .or() / .not()
 const deploy = step({
@@ -150,9 +166,8 @@ evaluation order.
 
 ## Condition propagation
 
-Conditions on leaf steps automatically propagate backward to their
-dependencies. This avoids running expensive setup steps when they aren't
-needed:
+Conditions on leaf steps automatically propagate backward to their dependencies.
+This avoids running expensive setup steps when they aren't needed:
 
 ```ts
 const checkout = step({ uses: "actions/checkout@v6" });
@@ -167,19 +182,22 @@ wf.createJob("test", { runsOn: "ubuntu-latest" }).withSteps(test);
 // all three steps get: if: matrix.job == 'test'
 ```
 
-When multiple leaf steps have different conditions, dependencies get the
-OR of those conditions:
+When multiple leaf steps have different conditions, dependencies get the OR of
+those conditions:
 
 ```ts
-const test = step({ run: "cargo test", if: jobExpr.equals("test") }).dependsOn(checkout);
-const bench = step({ run: "cargo bench", if: jobExpr.equals("bench") }).dependsOn(checkout);
+const test = step({ run: "cargo test", if: jobExpr.equals("test") }).dependsOn(
+  checkout,
+);
+const bench = step({ run: "cargo bench", if: jobExpr.equals("bench") })
+  .dependsOn(checkout);
 
 wf.createJob("test", { runsOn: "ubuntu-latest" }).withSteps(test, bench);
 // checkout gets: if: matrix.job == 'test' || matrix.job == 'bench'
 ```
 
-To prevent propagation, pass the unconditional steps to `withSteps()` as
-well. Leaf steps act as propagation barriers:
+To prevent propagation, pass the unconditional steps to `withSteps()` as well.
+Leaf steps act as propagation barriers:
 
 ```ts
 const build = step({ run: "cargo build" }).dependsOn(checkout);
@@ -229,7 +247,10 @@ topologically sorted:
 const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
 const buildA = step({ name: "Build A", run: "make a" }).dependsOn(checkout);
 const buildB = step({ name: "Build B", run: "make b" }).dependsOn(checkout);
-const integrate = step({ name: "Integrate", run: "make all" }).dependsOn(buildA, buildB);
+const integrate = step({ name: "Integrate", run: "make all" }).dependsOn(
+  buildA,
+  buildB,
+);
 
 wf.createJob("ci", { runsOn: "ubuntu-latest" }).withSteps(integrate);
 // resolves to: checkout → buildA → buildB → integrate
@@ -241,7 +262,7 @@ wf.createJob("ci", { runsOn: "ubuntu-latest" }).withSteps(integrate);
 `defineMatrix()` gives you typed access to matrix values:
 
 ```ts
-import { defineMatrix } from "jsr:@david/ci-yml-generator@<version>";
+import { defineMatrix } from "jsr:@david/gagen@<version>";
 
 const matrix = defineMatrix({
   include: [
@@ -250,9 +271,9 @@ const matrix = defineMatrix({
   ],
 });
 
-matrix.os      // ExpressionValue("matrix.os") — autocompletes
-matrix.runner  // ExpressionValue("matrix.runner")
-matrix.foo     // TypeScript error — not a matrix key
+matrix.os; // ExpressionValue("matrix.os") — autocompletes
+matrix.runner; // ExpressionValue("matrix.runner")
+matrix.foo; // TypeScript error — not a matrix key
 
 wf.createJob("build", {
   runsOn: matrix.runner,
@@ -268,7 +289,7 @@ const matrix = defineMatrix({
   node: [18, 20],
 });
 
-matrix.os.equals("linux")  // condition for use in step `if`
+matrix.os.equals("linux"); // condition for use in step `if`
 ```
 
 ### Matrix exclude
@@ -290,7 +311,7 @@ const matrix = defineMatrix({
 Type-safe workflow and job permissions:
 
 ```ts
-import { createWorkflow } from "jsr:@david/ci-yml-generator@<version>";
+import { createWorkflow } from "jsr:@david/gagen@<version>";
 
 const wf = createWorkflow({
   name: "ci",
@@ -312,8 +333,8 @@ wf.createJob("deploy", {
 }).withSteps(deploy);
 ```
 
-Permission scopes (`contents`, `packages`, `id-token`, etc.) and levels
-(`read`, `write`, `none`) are fully typed.
+Permission scopes (`contents`, `packages`, `id-token`, etc.) and levels (`read`,
+`write`, `none`) are fully typed.
 
 ## Reusable workflows
 
@@ -321,7 +342,7 @@ Define reusable workflows with `workflow_call` triggers and call them from other
 jobs:
 
 ```ts
-import { createWorkflow } from "jsr:@david/ci-yml-generator@<version>";
+import { createWorkflow } from "jsr:@david/gagen@<version>";
 
 // define a reusable workflow
 const wf = createWorkflow({
@@ -333,7 +354,10 @@ const wf = createWorkflow({
         debug: { type: "boolean", default: false },
       },
       outputs: {
-        build_id: { description: "The build ID", value: "${{ jobs.build.outputs.id }}" },
+        build_id: {
+          description: "The build ID",
+          value: "${{ jobs.build.outputs.id }}",
+        },
       },
       secrets: {
         deploy_key: { required: true },
@@ -367,7 +391,11 @@ Link upload and download artifact steps across jobs with automatic `needs`
 inference:
 
 ```ts
-import { defineArtifact, step, createWorkflow } from "jsr:@david/ci-yml-generator@<version>";
+import {
+  createWorkflow,
+  defineArtifact,
+  step,
+} from "jsr:@david/gagen@<version>";
 
 const artifact = defineArtifact("build-output");
 
@@ -375,7 +403,9 @@ const buildStep = step({ name: "Build", run: "make build" });
 const upload = artifact.upload({ path: "dist/", retentionDays: 5 });
 
 const download = artifact.download({ path: "dist/" });
-const deployStep = step({ name: "Deploy", run: "make deploy" }).dependsOn(download);
+const deployStep = step({ name: "Deploy", run: "make deploy" }).dependsOn(
+  download,
+);
 
 const wf = createWorkflow({
   name: "CI",

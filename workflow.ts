@@ -1,6 +1,6 @@
 import process from "node:process";
-import { parse } from "jsr:@std/yaml/parse";
-import { stringify } from "jsr:@std/yaml/stringify";
+import { parse } from "@std/yaml/parse";
+import { stringify } from "@std/yaml/stringify";
 import { ExpressionValue } from "./expression.ts";
 import { Job, type JobConfig } from "./job.ts";
 import type { Permissions } from "./permissions.ts";
@@ -97,9 +97,7 @@ export class Workflow {
     if (this.config.env != null) {
       const env: Record<string, string | number | boolean> = {};
       for (const [key, value] of Object.entries(this.config.env)) {
-        env[key] = value instanceof ExpressionValue
-          ? value.toString()
-          : value;
+        env[key] = value instanceof ExpressionValue ? value.toString() : value;
       }
       obj.env = env;
     }
@@ -131,7 +129,7 @@ export class Workflow {
   }
 
   writeOrLint(
-    options: { filePath: URL, header?: string },
+    options: { filePath: URL; header?: string },
   ): void {
     const expected = this.toYamlString(options);
 

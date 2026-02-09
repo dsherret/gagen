@@ -1,5 +1,5 @@
 {
-  "name": "@david/ci-yml-generator",
+  "name": "@david/gagen",
   "version": "0.0.1",
   "exports": "./mod.ts",
   "license": "MIT",
