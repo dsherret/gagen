@@ -143,7 +143,7 @@ export class Workflow {
   ): void {
     const expected = this.toYamlString(options);
 
-    if (process.argv.includes("--lint")) {
+    if (isLinting) {
       const existing = fs.readFileSync(options.filePath, { encoding: "utf8" });
       const parsedExisting = parse(existing);
       const parsedExpected = parse(expected);
@@ -161,6 +161,9 @@ export class Workflow {
     }
   }
 }
+
+/** Gets if linting would occur when using `writeOrLint` on a workflow. */
+export const isLinting: boolean = process.argv.includes("--lint");
 
 export function createWorkflow(config: WorkflowConfig): Workflow {
   return new Workflow(config);

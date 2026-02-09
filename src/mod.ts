@@ -17,6 +17,7 @@ export type {
 } from "./job.ts";
 export { createWorkflow, Workflow } from "./workflow.ts";
 export type {
+  isLinting,
   WorkflowCallInput,
   WorkflowCallOutput,
   WorkflowCallSecret,
