@@ -258,6 +258,131 @@ const matrix = defineMatrix({
 matrix.os.equals("linux")  // condition for use in step `if`
 ```
 
+### Matrix exclude
+
+Pass an `exclude` array to remove specific combinations:
+
+```ts
+const matrix = defineMatrix({
+  os: ["linux", "macos"],
+  node: [18, 20],
+  exclude: [{ os: "macos", node: 18 }],
+});
+
+// matrix.os and matrix.node are still typed — exclude is not a key
+```
+
+## Permissions
+
+Type-safe workflow and job permissions:
+
+```ts
+import { createWorkflow } from "jsr:@david/ci-yml-generator@<version>";
+
+const wf = createWorkflow({
+  name: "ci",
+  on: { push: { branches: ["main"] } },
+  permissions: { contents: "read", packages: "write" },
+});
+
+// or use a scalar value
+const wf2 = createWorkflow({
+  name: "ci",
+  on: { push: { branches: ["main"] } },
+  permissions: "read-all",
+});
+
+// job-level permissions
+wf.createJob("deploy", {
+  runsOn: "ubuntu-latest",
+  permissions: { contents: "read", "id-token": "write" },
+}).withSteps(deploy);
+```
+
+Permission scopes (`contents`, `packages`, `id-token`, etc.) and levels
+(`read`, `write`, `none`) are fully typed.
+
+## Reusable workflows
+
+Define reusable workflows with `workflow_call` triggers and call them from other
+jobs:
+
+```ts
+import { createWorkflow } from "jsr:@david/ci-yml-generator@<version>";
+
+// define a reusable workflow
+const wf = createWorkflow({
+  name: "Reusable Build",
+  on: {
+    workflow_call: {
+      inputs: {
+        environment: { type: "string", required: true },
+        debug: { type: "boolean", default: false },
+      },
+      outputs: {
+        build_id: { description: "The build ID", value: "${{ jobs.build.outputs.id }}" },
+      },
+      secrets: {
+        deploy_key: { required: true },
+      },
+    },
+  },
+});
+```
+
+Call a reusable workflow from a job using `uses` instead of `runsOn`:
+
+```ts
+const wf = createWorkflow({
+  name: "CI",
+  on: { push: { branches: ["main"] } },
+});
+
+wf.createJob("build", {
+  uses: "octo-org/example/.github/workflows/build.yml@main",
+  with: { environment: "production" },
+  secrets: "inherit",
+});
+```
+
+Reusable jobs support `with`, `secrets` (either `"inherit"` or a record), and
+all common job fields (`name`, `needs`, `if`, `permissions`, `concurrency`).
+
+## Artifacts
+
+Link upload and download artifact steps across jobs with automatic `needs`
+inference:
+
+```ts
+import { defineArtifact, step, createWorkflow } from "jsr:@david/ci-yml-generator@<version>";
+
+const artifact = defineArtifact("build-output");
+
+const buildStep = step({ name: "Build", run: "make build" });
+const upload = artifact.upload({ path: "dist/", retentionDays: 5 });
+
+const download = artifact.download({ path: "dist/" });
+const deployStep = step({ name: "Deploy", run: "make deploy" }).dependsOn(download);
+
+const wf = createWorkflow({
+  name: "CI",
+  on: { push: { branches: ["main"] } },
+});
+
+wf.createJob("build", { runsOn: "ubuntu-latest" })
+  .withSteps(buildStep, upload);
+
+// needs: [build] is inferred automatically from the artifact link
+wf.createJob("deploy", { runsOn: "ubuntu-latest" })
+  .withSteps(deployStep);
+```
+
+The artifact version defaults to `v4` but can be configured:
+
+```ts
+const artifact = defineArtifact("build-output", { version: "v3" });
+```
+
 ## Job configuration
 
 ```ts

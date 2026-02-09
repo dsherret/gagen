@@ -2352,3 +2352,165 @@ jobs:
 `,
   );
 });
+
+// --- services ---
+
+Deno.test("single service serializes correctly", () => {
+  setup();
+  const s = step({ name: "Test", run: "npm test" });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("test", {
+    runsOn: "ubuntu-latest",
+    services: {
+      postgres: {
+        image: "postgres:15",
+        env: { POSTGRES_PASSWORD: "test" },
+        ports: ["5432:5432"],
+        options: "--health-cmd pg_isready --health-interval 10s",
+      },
+    },
+  }).withSteps(s);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: 'postgres:15'
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - '5432:5432'
+        options: '--health-cmd pg_isready --health-interval 10s'
+    steps:
+      - name: Test
+        run: npm test
+`,
+  );
+});
+
+Deno.test("multiple services", () => {
+  setup();
+  const s = step({ name: "Test", run: "npm test" });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("test", {
+    runsOn: "ubuntu-latest",
+    services: {
+      postgres: {
+        image: "postgres:15",
+        ports: ["5432:5432"],
+      },
+      redis: {
+        image: "redis:7",
+        ports: ["6379:6379"],
+      },
+    },
+  }).withSteps(s);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: 'postgres:15'
+        ports:
+          - '5432:5432'
+      redis:
+        image: 'redis:7'
+        ports:
+          - '6379:6379'
+    steps:
+      - name: Test
+        run: npm test
+`,
+  );
+});
+
+Deno.test("service with credentials using ExpressionValue", () => {
+  setup();
+  const s = step({ name: "Test", run: "npm test" });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("test", {
+    runsOn: "ubuntu-latest",
+    services: {
+      registry: {
+        image: "ghcr.io/my-org/my-image:latest",
+        credentials: {
+          username: "bot",
+          password: expr("secrets.GHCR_TOKEN"),
+        },
+      },
+    },
+  }).withSteps(s);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: 'ghcr.io/my-org/my-image:latest'
+        credentials:
+          username: bot
+          password: '\${{ secrets.GHCR_TOKEN }}'
+    steps:
+      - name: Test
+        run: npm test
+`,
+  );
+});
+
+Deno.test("service env with ExpressionValue", () => {
+  setup();
+  const s = step({ name: "Test", run: "npm test" });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("test", {
+    runsOn: "ubuntu-latest",
+    services: {
+      db: {
+        image: "postgres:15",
+        env: {
+          POSTGRES_PASSWORD: expr("secrets.DB_PASSWORD"),
+          POSTGRES_DB: "testdb",
+        },
+        volumes: ["data:/var/lib/postgresql/data"],
+      },
+    },
+  }).withSteps(s);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: 'postgres:15'
+        env:
+          POSTGRES_PASSWORD: '\${{ secrets.DB_PASSWORD }}'
+          POSTGRES_DB: testdb
+        volumes:
+          - 'data:/var/lib/postgresql/data'
+    steps:
+      - name: Test
+        run: npm test
+`,
+  );
+});

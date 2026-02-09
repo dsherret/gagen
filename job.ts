@@ -24,6 +24,15 @@ interface CommonJobFields {
   concurrency?: { group: string; cancelInProgress?: boolean | string };
 }
 
+export interface ServiceContainer {
+  image: string;
+  credentials?: { username: string; password: string | ExpressionValue };
+  env?: Record<string, ConfigValue>;
+  ports?: string[];
+  volumes?: string[];
+  options?: string;
+}
+
 export interface StepsJobConfig extends CommonJobFields {
   runsOn: string | ExpressionValue;
   strategy?: {
@@ -38,6 +47,7 @@ export interface StepsJobConfig extends CommonJobFields {
     | { name: string | ExpressionValue; url?: string }
     | string
     | ExpressionValue;
+  services?: Record<string, ServiceContainer>;
 }
 
 export interface ReusableJobConfig extends CommonJobFields {
@@ -318,6 +328,14 @@ export class Job implements ExpressionSource {
           : value;
       }
       result.env = env;
+    }
+
+    if (this.config.services != null) {
+      const services: Record<string, unknown> = {};
+      for (const [name, svc] of Object.entries(this.config.services)) {
+        services[name] = serializeService(svc);
+      }
+      result.services = services;
     }
 
     // outputs
@@ -804,6 +822,31 @@ function collectJobSourcesFromStep(
   for (const dep of s.dependencies) {
     collectJobSourcesFromStep(dep, out, visited);
   }
+}
+
+function serializeService(svc: ServiceContainer): Record<string, unknown> {
+  const result: Record<string, unknown> = { image: svc.image };
+  if (svc.credentials != null) {
+    result.credentials = {
+      username: svc.credentials.username,
+      password: svc.credentials.password instanceof ExpressionValue
+        ? svc.credentials.password.toString()
+        : svc.credentials.password,
+    };
+  }
+  if (svc.env != null) {
+    result.env = serializeConfigValues(svc.env);
+  }
+  if (svc.ports != null) {
+    result.ports = svc.ports;
+  }
+  if (svc.volumes != null) {
+    result.volumes = svc.volumes;
+  }
+  if (svc.options != null) {
+    result.options = svc.options;
+  }
+  return result;
 }
 
 function serializeEnvironment(
