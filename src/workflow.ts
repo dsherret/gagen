@@ -2,9 +2,10 @@ import process from "node:process";
 import { parse } from "@std/yaml/parse";
 import { stringify } from "@std/yaml/stringify";
 import { ExpressionValue } from "./expression.ts";
-import { Job, job as jobFn, type JobConfig, type JobDef } from "./job.ts";
+import { Job, job as jobFn, type JobDef, resolveJobId } from "./job.ts";
 import type { Permissions } from "./permissions.ts";
 import type { ConfigValue } from "./step.ts";
+import fs from "node:fs";
 
 export interface WorkflowCallInput {
   type: "string" | "boolean" | "number";
@@ -54,7 +55,7 @@ export interface WorkflowConfig {
   permissions?: Permissions;
   concurrency?: { group: string; cancelInProgress?: boolean | string };
   env?: Record<string, ConfigValue>;
-  jobs?: Record<string, JobDef | Job>;
+  jobs?: (JobDef | Job)[];
 }
 
 export class Workflow {
@@ -64,31 +65,22 @@ export class Workflow {
   constructor(config: WorkflowConfig) {
     this.config = config;
     if (config.jobs != null) {
-      for (const [id, jobOrDef] of Object.entries(config.jobs)) {
+      for (const jobOrDef of config.jobs) {
+        let id: string;
+        let resolved: Job;
+        if (jobOrDef instanceof Job) {
+          id = jobOrDef._id;
+          resolved = jobOrDef;
+        } else {
+          id = resolveJobId(jobOrDef);
+          resolved = jobFn(id, jobOrDef);
+        }
         if (this.jobs.has(id)) {
           throw new Error(`Duplicate job id: "${id}"`);
         }
-        if (jobOrDef instanceof Job) {
-          if (jobOrDef._id !== id) {
-            throw new Error(
-              `Job ID mismatch: job("${jobOrDef._id}") placed under key "${id}"`,
-            );
-          }
-          this.jobs.set(id, jobOrDef);
-        } else {
-          this.jobs.set(id, jobFn(id, jobOrDef));
-        }
+        this.jobs.set(id, resolved);
       }
     }
-  }
-
-  createJob(id: string, config: JobConfig): Job {
-    if (this.jobs.has(id)) {
-      throw new Error(`Duplicate job id: "${id}"`);
-    }
-    const job = new Job(id, config);
-    this.jobs.set(id, job);
-    return job;
   }
 
   toYamlString(options?: { header?: string }): string {
@@ -143,7 +135,7 @@ export class Workflow {
   }
 
   writeToFile(path: string | URL, options?: { header?: string }): void {
-    Deno.writeTextFileSync(path, this.toYamlString(options));
+    fs.writeFileSync(path, this.toYamlString(options));
   }
 
   writeOrLint(
@@ -152,7 +144,7 @@ export class Workflow {
     const expected = this.toYamlString(options);
 
     if (process.argv.includes("--lint")) {
-      const existing = Deno.readTextFileSync(options.filePath);
+      const existing = fs.readFileSync(options.filePath, { encoding: "utf8" });
       const parsedExisting = parse(existing);
       const parsedExpected = parse(expected);
 
@@ -165,7 +157,7 @@ export class Workflow {
         process.exit(1);
       }
     } else {
-      Deno.writeTextFileSync(options.filePath, expected);
+      fs.writeFileSync(options.filePath, expected);
     }
   }
 }

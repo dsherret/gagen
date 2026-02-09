@@ -12,6 +12,7 @@ import {
   step,
   steps,
 } from "./mod.ts";
+import { resolveJobId, toKebabCase } from "./job.ts";
 import { resetStepCounter } from "./step.ts";
 
 const { status, isTag, isBranch, isEvent } = conditions;
@@ -25,10 +26,17 @@ function setup() {
 
 Deno.test("writeOrLint writes file when not linting", () => {
   setup();
-  const wf = createWorkflow({ name: "ci", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(
-    step({ name: "Test", run: "echo hi" }),
-  );
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "Test", run: "echo hi" })],
+      },
+    ],
+  });
 
   const tmpDir = Deno.makeTempDirSync();
   const filePath = new URL(`file://${tmpDir}/ci.yml`);
@@ -45,10 +53,17 @@ Deno.test("writeOrLint writes file when not linting", () => {
 
 Deno.test("writeOrLint lint passes when yaml matches", () => {
   setup();
-  const wf = createWorkflow({ name: "ci", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(
-    step({ name: "Test", run: "echo hi" }),
-  );
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "Test", run: "echo hi" })],
+      },
+    ],
+  });
 
   const tmpDir = Deno.makeTempDirSync();
   const filePath = new URL(`file://${tmpDir}/ci.yml`);
@@ -68,10 +83,17 @@ Deno.test("writeOrLint lint passes when yaml matches", () => {
 
 Deno.test("writeOrLint lint passes with different formatting", () => {
   setup();
-  const wf = createWorkflow({ name: "ci", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(
-    step({ name: "Test", run: "echo hi" }),
-  );
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "Test", run: "echo hi" })],
+      },
+    ],
+  });
 
   const tmpDir = Deno.makeTempDirSync();
   const filePath = new URL(`file://${tmpDir}/ci.yml`);
@@ -95,10 +117,17 @@ Deno.test("writeOrLint lint passes with different formatting", () => {
 
 Deno.test("writeOrLint lint passes when file has header comment", () => {
   setup();
-  const wf = createWorkflow({ name: "ci", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(
-    step({ name: "Test", run: "echo hi" }),
-  );
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "Test", run: "echo hi" })],
+      },
+    ],
+  });
 
   const tmpDir = Deno.makeTempDirSync();
   const filePath = new URL(`file://${tmpDir}/ci.yml`);
@@ -140,16 +169,16 @@ Deno.test("basic README example", () => {
     on: {
       push: { branches: ["main"] },
     },
+    jobs: [
+      {
+        id: "build",
+        name: "build",
+        runsOn: "ubuntu-latest",
+        steps: [cargoTest],
+      },
+      { id: "lint", runsOn: "ubuntu-latest", steps: [cargoBuild] },
+    ],
   });
-
-  wf.createJob("build", {
-    name: "build",
-    runsOn: "ubuntu-latest",
-  }).withSteps(cargoTest);
-
-  wf.createJob("lint", {
-    runsOn: "ubuntu-latest",
-  }).withSteps(cargoBuild);
 
   assertEquals(
     wf.toYamlString(),
@@ -189,8 +218,13 @@ Deno.test("transitive deps are resolved", () => {
   const c = step({ name: "C" }).dependsOn(b);
   const d = step({ name: "D" }).dependsOn(c);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(d);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [d] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -217,8 +251,13 @@ Deno.test("diamond dependency - D appears once, before B and C", () => {
   const c = step({ name: "C" }).dependsOn(d);
   const a = step({ name: "A" }).dependsOn(b, c);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [a] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -246,8 +285,13 @@ Deno.test("step with if condition appears in YAML", () => {
     if: expr("matrix.os").equals("linux"),
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -272,8 +316,13 @@ Deno.test("step with string if condition", () => {
     if: "always()",
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -301,19 +350,26 @@ Deno.test("job needs inferred from job output reference in if", () => {
     outputs: ["skip"],
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-
-  const preBuild = wf.createJob("pre_build", {
+  const preBuild = job("pre_build", {
     runsOn: "ubuntu-latest",
-  }).withSteps(checkStep).withOutputs({
-    skip: checkStep.outputs.skip,
+    steps: [checkStep],
+    outputs: { skip: checkStep.outputs.skip },
   });
 
   const buildStep = step({ name: "Build", run: "cargo build" });
-  wf.createJob("build", {
-    runsOn: "ubuntu-latest",
-    if: preBuild.outputs.skip.notEquals("true"),
-  }).withSteps(buildStep);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      preBuild,
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        if: preBuild.outputs.skip.notEquals("true"),
+        steps: [buildStep],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -344,13 +400,23 @@ jobs:
 
 Deno.test("explicit needs appear in YAML", () => {
   setup();
-  const wf = createWorkflow({ name: "test", on: {} });
-  const jobA = wf.createJob("a", { runsOn: "ubuntu-latest" })
-    .withSteps(step({ name: "A", run: "echo a" }));
-  wf.createJob("b", {
+  const jobA = job("a", {
     runsOn: "ubuntu-latest",
-    needs: [jobA],
-  }).withSteps(step({ name: "B", run: "echo b" }));
+    steps: [step({ name: "A", run: "echo a" })],
+  });
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      jobA,
+      {
+        id: "b",
+        runsOn: "ubuntu-latest",
+        needs: [jobA],
+        steps: [step({ name: "B", run: "echo b" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -384,11 +450,17 @@ Deno.test("step outputs create job outputs in YAML", () => {
     outputs: ["result"],
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("check_job", {
-    runsOn: "ubuntu-latest",
-  }).withSteps(checkStep).withOutputs({
-    result: checkStep.outputs.result,
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "check_job",
+        runsOn: "ubuntu-latest",
+        steps: [checkStep],
+        outputs: { result: checkStep.outputs.result },
+      },
+    ],
   });
 
   assertEquals(
@@ -417,27 +489,18 @@ Deno.test("cycle detection throws", () => {
   // create cycle: a depends on b, b depends on a
   a.dependsOn(b);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [a] },
+    ],
+  });
 
   assertThrows(
     () => wf.toYamlString(),
     Error,
     "Cycle detected",
-  );
-});
-
-// --- duplicate job id ---
-
-Deno.test("duplicate job id throws", () => {
-  setup();
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" });
-
-  assertThrows(
-    () => wf.createJob("build", { runsOn: "ubuntu-latest" }),
-    Error,
-    'Duplicate job id: "build"',
   );
 });
 
@@ -461,8 +524,13 @@ Deno.test("step run array is joined with newlines", () => {
     run: ["echo a", "echo b", "echo c"],
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -492,8 +560,13 @@ Deno.test("step with ExpressionValue in with field", () => {
     with: { token: ev },
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -515,11 +588,18 @@ jobs:
 
 Deno.test("job defaults serialized correctly", () => {
   setup();
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", {
-    runsOn: "ubuntu-latest",
-    defaults: { run: { shell: "bash" } },
-  }).withSteps(step({ name: "S", run: "echo hi" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        defaults: { run: { shell: "bash" } },
+        steps: [step({ name: "S", run: "echo hi" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -542,11 +622,18 @@ jobs:
 
 Deno.test("job timeout-minutes serialized", () => {
   setup();
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", {
-    runsOn: "ubuntu-latest",
-    timeoutMinutes: 60,
-  }).withSteps(step({ name: "S", run: "echo hi" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        timeoutMinutes: 60,
+        steps: [step({ name: "S", run: "echo hi" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -575,9 +662,14 @@ Deno.test("workflow permissions and concurrency", () => {
       group: "ci-${{ github.ref }}",
       cancelInProgress: true,
     },
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "S", run: "echo hi" })],
+      },
+    ],
   });
-  wf.createJob("j", { runsOn: "ubuntu-latest" })
-    .withSteps(step({ name: "S", run: "echo hi" }));
 
   assertEquals(
     wf.toYamlString(),
@@ -613,8 +705,13 @@ Deno.test("condition propagates from leaf to dependencies", () => {
     if: expr("matrix.job").equals("test"),
   }).dependsOn(build);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [test] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -651,8 +748,13 @@ Deno.test("conditions OR'd when multiple dependents", () => {
     if: expr("matrix.job").equals("bench"),
   }).dependsOn(checkout);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test, bench);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [test, bench] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -688,8 +790,13 @@ Deno.test("no propagation when a dependent has no condition", () => {
     run: "cargo clippy",
   }).dependsOn(checkout);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test, lint);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [test, lint] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -725,8 +832,13 @@ Deno.test("condition with step output does not propagate past source", () => {
     if: build.outputs.status.equals("ok"),
   }).dependsOn(build);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [test] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -762,8 +874,13 @@ Deno.test("propagated condition ANDed with own if", () => {
     if: expr("matrix.job").equals("test"),
   }).dependsOn(build);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [test] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -797,8 +914,13 @@ Deno.test("unconditional leaf blocks propagation to shared deps", () => {
     if: expr("matrix.os").equals("linux"),
   }).dependsOn(build, test);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(test, linuxOnly);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [test, linuxOnly] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -832,9 +954,14 @@ Deno.test("leaf steps passed to withSteps do not get propagation", () => {
     if: expr("matrix.job").equals("test"),
   }).dependsOn(a);
 
-  const wf = createWorkflow({ name: "test", on: {} });
   // both are explicitly passed to withSteps
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a, b);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [a, b] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -863,11 +990,18 @@ Deno.test("defineMatrix with include serializes and provides typed expressions",
     ],
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    runsOn: matrix.runner,
-    strategy: { matrix },
-  }).withSteps(step({ name: "Build", run: "cargo build" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: matrix.runner,
+        strategy: { matrix },
+        steps: [step({ name: "Build", run: "cargo build" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -897,11 +1031,18 @@ Deno.test("defineMatrix with key-value arrays", () => {
     node: [18, 20],
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    runsOn: "ubuntu-latest",
-    strategy: { matrix, failFast: false },
-  }).withSteps(step({ name: "Build", run: "cargo build" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        strategy: { matrix, failFast: false },
+        steps: [step({ name: "Build", run: "cargo build" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -938,11 +1079,18 @@ Deno.test("matrix expressions work in step conditions", () => {
     if: matrix.os.equals("linux"),
   }).dependsOn(checkout);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    runsOn: "ubuntu-latest",
-    strategy: { matrix },
-  }).withSteps(linuxStep);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        strategy: { matrix },
+        steps: [linuxStep],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -974,10 +1122,17 @@ Deno.test("simple ternary with .then().else()", () => {
   const os = expr("matrix.os");
   const runner = os.equals("linux").then("ubuntu-latest").else("macos-latest");
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    runsOn: runner,
-  }).withSteps(step({ name: "Build", run: "cargo build" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: runner,
+        steps: [step({ name: "Build", run: "cargo build" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1000,10 +1155,17 @@ Deno.test("ternary with elseIf chain", () => {
     .elseIf(os.equals("macos")).then("macos-latest")
     .else("windows-latest");
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    runsOn: runner,
-  }).withSteps(step({ name: "Build", run: "cargo build" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: runner,
+        steps: [step({ name: "Build", run: "cargo build" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1031,11 +1193,18 @@ Deno.test("ternary with ExpressionValue as value", () => {
     .then(matrix.runner)
     .else("self-hosted");
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    runsOn: result,
-    strategy: { matrix },
-  }).withSteps(step({ name: "Build", run: "cargo build" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: result,
+        strategy: { matrix },
+        steps: [step({ name: "Build", run: "cargo build" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1065,10 +1234,17 @@ Deno.test("ternary with || condition gets parenthesized", () => {
     .then("unix-runner")
     .else("windows-runner");
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    runsOn: runner,
-  }).withSteps(step({ name: "Build", run: "cargo build" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: runner,
+        steps: [step({ name: "Build", run: "cargo build" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1093,20 +1269,28 @@ Deno.test("ternary with job output infers needs", () => {
     outputs: ["env"],
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  const preJob = wf.createJob("pre", {
+  const preJob = job("pre", {
     runsOn: "ubuntu-latest",
-  }).withSteps(checkStep).withOutputs({
-    env: checkStep.outputs.env,
+    steps: [checkStep],
+    outputs: { env: checkStep.outputs.env },
   });
 
   const runner = preJob.outputs.env.equals("prod")
     .then("prod-runner")
     .else("dev-runner");
 
-  wf.createJob("build", {
-    runsOn: runner,
-  }).withSteps(step({ name: "Build", run: "cargo build" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      preJob,
+      {
+        id: "build",
+        runsOn: runner,
+        steps: [step({ name: "Build", run: "cargo build" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1143,9 +1327,14 @@ Deno.test("status.always() in step if", () => {
     if: status.always(),
   }).dependsOn(build);
 
-  const wf = createWorkflow({ name: "test", on: {} });
   // build passed as leaf to block propagation of always()
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(build, cleanup);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [build, cleanup] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1174,9 +1363,14 @@ Deno.test("status.failure() composed with condition", () => {
     if: status.failure().and(os.equals("linux")),
   }).dependsOn(build);
 
-  const wf = createWorkflow({ name: "test", on: {} });
   // build passed as leaf to block propagation of failure()
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(build, notify);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [build, notify] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1205,8 +1399,13 @@ Deno.test("conditions.isTag() matches any tag", () => {
     if: isTag(),
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1231,8 +1430,13 @@ Deno.test("conditions.isTag(name) matches specific tag", () => {
     if: isTag("v1.0.0"),
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1257,8 +1461,13 @@ Deno.test("conditions.isBranch(name) matches specific branch", () => {
     if: isBranch("main"),
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1283,8 +1492,13 @@ Deno.test("conditions.isEvent(name) matches event type", () => {
     if: isEvent("pull_request"),
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1309,8 +1523,13 @@ Deno.test("conditions compose with .and()", () => {
     if: isBranch("main").and(isEvent("push")),
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1343,11 +1562,13 @@ Deno.test("not() on comparison parenthesizes correctly", () => {
     if: isCross.not(),
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", {
-    runsOn: "ubuntu-latest",
-    strategy: { matrix },
-  }).withSteps(s);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", strategy: { matrix }, steps: [s] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1380,12 +1601,19 @@ Deno.test("job name accepts ExpressionValue", () => {
     ],
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    name: matrix.target,
-    runsOn: matrix.runner,
-    strategy: { matrix },
-  }).withSteps(step({ name: "Build", run: "make" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        name: matrix.target,
+        runsOn: matrix.runner,
+        strategy: { matrix },
+        steps: [step({ name: "Build", run: "make" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1413,10 +1641,17 @@ jobs:
 
 Deno.test("toYamlString with custom header", () => {
   setup();
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(
-    step({ name: "Build", run: "make" }),
-  );
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "Build", run: "make" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString({
@@ -1438,10 +1673,17 @@ jobs:
 
 Deno.test("toYamlString with no header by default", () => {
   setup();
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(
-    step({ name: "Build", run: "make" }),
-  );
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "Build", run: "make" })],
+      },
+    ],
+  });
 
   const yaml = wf.toYamlString();
   assertEquals(yaml.startsWith("name: test\n"), true);
@@ -1454,10 +1696,9 @@ Deno.test("withGlobalCondition applies to all steps", () => {
   const checkout = step({ uses: "actions/checkout@v6" });
   const build = step({ name: "Build", run: "make" }).dependsOn(checkout);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" })
-    .withGlobalCondition(isBranch("main"))
-    .withSteps(build);
+  const j = job("j", { runsOn: "ubuntu-latest", steps: [build] })
+    .withGlobalCondition(isBranch("main"));
+  const wf = createWorkflow({ name: "test", on: {}, jobs: [j] });
 
   assertEquals(
     wf.toYamlString(),
@@ -1485,10 +1726,9 @@ Deno.test("withGlobalCondition ANDs with step condition", () => {
     if: os.equals("linux"),
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" })
-    .withGlobalCondition(isBranch("main"))
-    .withSteps(s);
+  const j = job("j", { runsOn: "ubuntu-latest", steps: [s] })
+    .withGlobalCondition(isBranch("main"));
+  const wf = createWorkflow({ name: "test", on: {}, jobs: [j] });
 
   assertEquals(
     wf.toYamlString(),
@@ -1517,8 +1757,13 @@ Deno.test("steps() groups steps and dependsOn applies to all", () => {
 
   const build = step({ name: "Build", run: "cargo build" }).dependsOn(group);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(build);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [build] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1547,8 +1792,13 @@ Deno.test("steps() with existing Step instances", () => {
 
   const build = step({ name: "Build", run: "cargo build" }).dependsOn(group);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(build);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [build] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1584,8 +1834,13 @@ Deno.test("steps() group passed directly to withSteps", () => {
     },
   ).dependsOn(checkout);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(group);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [group] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1611,8 +1866,13 @@ jobs:
 Deno.test("steps() single step behaves like step()", () => {
   setup();
   const group = steps({ name: "Only", run: "echo hi" });
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(group);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [group] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1646,9 +1906,14 @@ Deno.test("withSteps order is respected over creation order", () => {
   const build = step({ name: "Build", run: "cargo build" }).dependsOn(checkout);
   const lint = step({ name: "Lint", run: "deno lint" }).dependsOn(setupDeno);
 
-  const wf = createWorkflow({ name: "test", on: {} });
   // pass build before lint — setupDeno should appear just before lint, not at the top
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(build, lint);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [build, lint] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1675,9 +1940,14 @@ Deno.test("withSteps order with independent leaf steps", () => {
   const b = step({ name: "B", run: "b" });
   const c = step({ name: "C", run: "c" });
 
-  const wf = createWorkflow({ name: "test", on: {} });
   // explicitly order: C, A, B
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(c, a, b);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [c, a, b] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1707,9 +1977,14 @@ Deno.test("StepGroup.if() applies condition to all steps", () => {
     { name: "Build cross (Release)", run: "cross build --release" },
   ).if(conditions.isTag()).dependsOn(checkout);
 
-  const wf = createWorkflow({ name: "test", on: {} });
   // pass checkout as leaf to prevent condition propagation
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(checkout, group);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [checkout, group] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1739,8 +2014,13 @@ Deno.test("StepGroup.if() ANDs with existing step conditions", () => {
     step({ name: "Build cross", if: isCross, run: "cross build" }),
   ).if(conditions.isTag());
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(group);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [group] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1771,8 +2051,13 @@ Deno.test("propagation deduplicates identical conditions", () => {
   const b = step({ name: "B", if: isTag, run: "b" }).dependsOn(checkout);
   const c = step({ name: "C", if: isTag, run: "c" }).dependsOn(checkout);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a, b, c);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [a, b, c] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1809,8 +2094,13 @@ Deno.test("propagation applies absorption: A || (A && B) → A", () => {
     checkout,
   );
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a, b);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [a, b] },
+    ],
+  });
 
   // checkout should get just isTag, not isTag || (isTag && isLinux)
   assertEquals(
@@ -1867,13 +2157,17 @@ Deno.test("propagation simplifies complex dprint-like scenario", () => {
     run: "test-release",
   }).dependsOn(setup_);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(
-    clippy,
-    testDebug,
-    testIntegration,
-    testRelease,
-  );
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [clippy, testDebug, testIntegration, testRelease],
+      },
+    ],
+  });
 
   const yaml = wf.toYamlString();
   // checkout and setup should get a simplified condition, not a huge OR
@@ -1925,8 +2219,13 @@ Deno.test("common factor extraction: (A && C) || (B && C) → C && (A || B)", ()
     checkout,
   );
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a, b);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [a, b] },
+    ],
+  });
 
   // checkout should get: isTag && (isLinux || isMac) — common factor extracted
   assertEquals(
@@ -1964,8 +2263,13 @@ Deno.test("common factor extraction: (A && B && C) || (A && D && C) → A && C &
   const b = step({ name: "B", if: runTests.and(isTag).and(target2), run: "b" })
     .dependsOn(checkout);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a, b);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [a, b] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2005,8 +2309,13 @@ Deno.test("no common factor when not all branches share a term", () => {
   );
   const c = step({ name: "C", if: isWindows, run: "c" }).dependsOn(checkout);
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a, b, c);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [a, b, c] },
+    ],
+  });
 
   // checkout should get the raw OR since no common factor across all three
   assertEquals(
@@ -2037,6 +2346,7 @@ jobs:
 
 Deno.test("workflow_call trigger with inputs, outputs, and secrets", () => {
   setup();
+  const build = step({ name: "Build", run: "cargo build" });
   const wf = createWorkflow({
     name: "Reusable Build",
     on: {
@@ -2056,10 +2366,10 @@ Deno.test("workflow_call trigger with inputs, outputs, and secrets", () => {
         },
       },
     },
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [build] },
+    ],
   });
-
-  const build = step({ name: "Build", run: "cargo build" });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(build);
 
   assertEquals(
     wf.toYamlString(),
@@ -2092,18 +2402,19 @@ jobs:
 
 Deno.test("reusable workflow job with uses and secrets inherit", () => {
   setup();
+  const build = step({ name: "Build", run: "cargo build" });
   const wf = createWorkflow({
     name: "CI",
     on: { push: { branches: ["main"] } },
-  });
-
-  const build = step({ name: "Build", run: "cargo build" });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(build);
-
-  wf.createJob("deploy", {
-    uses: "org/repo/.github/workflows/deploy.yml@main",
-    with: { environment: "production" },
-    secrets: "inherit",
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [build] },
+      {
+        id: "deploy",
+        uses: "org/repo/.github/workflows/deploy.yml@main",
+        with: { environment: "production" },
+        secrets: "inherit",
+      },
+    ],
   });
 
   assertEquals(
@@ -2133,15 +2444,17 @@ Deno.test("reusable workflow job with object secrets", () => {
   const wf = createWorkflow({
     name: "CI",
     on: { push: { branches: ["main"] } },
-  });
-
-  wf.createJob("deploy", {
-    uses: "org/repo/.github/workflows/deploy.yml@main",
-    with: { environment: "production", version: 3 },
-    secrets: {
-      deploy_token: expr("secrets.DEPLOY_TOKEN"),
-      api_key: expr("secrets.API_KEY"),
-    },
+    jobs: [
+      {
+        id: "deploy",
+        uses: "org/repo/.github/workflows/deploy.yml@main",
+        with: { environment: "production", version: 3 },
+        secrets: {
+          deploy_token: expr("secrets.DEPLOY_TOKEN"),
+          api_key: expr("secrets.API_KEY"),
+        },
+      },
+    ],
   });
 
   assertEquals(
@@ -2166,20 +2479,24 @@ jobs:
 
 Deno.test("reusable workflow job with needs and if", () => {
   setup();
+  const buildStep = step({ name: "Build", run: "cargo build" });
+  const buildJob = job("build", {
+    runsOn: "ubuntu-latest",
+    steps: [buildStep],
+  });
   const wf = createWorkflow({
     name: "CI",
     on: { push: { branches: ["main"] } },
-  });
-
-  const buildStep = step({ name: "Build", run: "cargo build" });
-  const buildJob = wf.createJob("build", { runsOn: "ubuntu-latest" })
-    .withSteps(buildStep);
-
-  wf.createJob("deploy", {
-    uses: "org/repo/.github/workflows/deploy.yml@main",
-    needs: [buildJob],
-    if: conditions.isTag(),
-    secrets: "inherit",
+    jobs: [
+      buildJob,
+      {
+        id: "deploy",
+        uses: "org/repo/.github/workflows/deploy.yml@main",
+        needs: [buildJob],
+        if: conditions.isTag(),
+        secrets: "inherit",
+      },
+    ],
   });
 
   assertEquals(
@@ -2207,17 +2524,12 @@ jobs:
 
 Deno.test("reusable workflow job throws on withSteps", () => {
   setup();
-  const wf = createWorkflow({
-    name: "CI",
-    on: { push: { branches: ["main"] } },
-  });
-
-  const job = wf.createJob("deploy", {
+  const j = job("deploy", {
     uses: "org/repo/.github/workflows/deploy.yml@main",
   });
 
   assertThrows(
-    () => job.withSteps(step({ run: "echo hi" })),
+    () => j.withSteps(step({ run: "echo hi" })),
     Error,
     "Cannot add steps to a reusable workflow job",
   );
@@ -2225,17 +2537,12 @@ Deno.test("reusable workflow job throws on withSteps", () => {
 
 Deno.test("reusable workflow job throws on withOutputs", () => {
   setup();
-  const wf = createWorkflow({
-    name: "CI",
-    on: { push: { branches: ["main"] } },
-  });
-
-  const job = wf.createJob("deploy", {
+  const j = job("deploy", {
     uses: "org/repo/.github/workflows/deploy.yml@main",
   });
 
   assertThrows(
-    () => job.withOutputs({ foo: expr("bar") }),
+    () => j.withOutputs({ foo: expr("bar") }),
     Error,
     "Cannot add outputs to a reusable workflow job",
   );
@@ -2253,11 +2560,18 @@ Deno.test("matrix with exclude serializes correctly", () => {
     ],
   });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    runsOn: "ubuntu-latest",
-    strategy: { matrix },
-  }).withSteps(step({ name: "Build", run: "npm test" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        strategy: { matrix },
+        steps: [step({ name: "Build", run: "npm test" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2302,11 +2616,18 @@ Deno.test("matrix exclude with include together", () => {
   // include keys are available as expressions
   assertEquals(matrix.experimental.toString(), "${{ matrix.experimental }}");
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", {
-    runsOn: "ubuntu-latest",
-    strategy: { matrix },
-  }).withSteps(step({ name: "Build", run: "npm test" }));
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        strategy: { matrix },
+        steps: [step({ name: "Build", run: "npm test" })],
+      },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2372,9 +2693,14 @@ Deno.test("object permissions serialize as map", () => {
       "pull-requests": "write",
       "id-token": "none",
     },
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "S", run: "echo hi" })],
+      },
+    ],
   });
-  wf.createJob("j", { runsOn: "ubuntu-latest" })
-    .withSteps(step({ name: "S", run: "echo hi" }));
 
   assertEquals(
     wf.toYamlString(),
@@ -2403,9 +2729,14 @@ Deno.test("read-all permissions serialize as scalar string", () => {
     name: "ci",
     on: { push: { branches: ["main"] } },
     permissions: "read-all",
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "S", run: "echo hi" })],
+      },
+    ],
   });
-  wf.createJob("j", { runsOn: "ubuntu-latest" })
-    .withSteps(step({ name: "S", run: "echo hi" }));
 
   assertEquals(
     wf.toYamlString(),
@@ -2430,11 +2761,15 @@ Deno.test("job-level permissions serialize correctly", () => {
   const wf = createWorkflow({
     name: "ci",
     on: { push: { branches: ["main"] } },
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        permissions: { contents: "write", packages: "read" },
+        steps: [step({ name: "S", run: "echo hi" })],
+      },
+    ],
   });
-  wf.createJob("j", {
-    runsOn: "ubuntu-latest",
-    permissions: { contents: "write", packages: "read" },
-  }).withSteps(step({ name: "S", run: "echo hi" }));
 
   assertEquals(
     wf.toYamlString(),
@@ -2463,8 +2798,13 @@ Deno.test("upload step serializes correctly", () => {
   const artifact = defineArtifact("build-output");
   const upload = artifact.upload({ path: "dist/" });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(upload);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2487,8 +2827,13 @@ Deno.test("upload step with custom retention days", () => {
   const artifact = defineArtifact("build-output");
   const upload = artifact.upload({ path: "dist/", retentionDays: 5 });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(upload);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2513,9 +2858,13 @@ Deno.test("download in same job doesn't add needs", () => {
   const upload = artifact.upload({ path: "dist/" });
   const download = artifact.download({ path: "dist/" });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" })
-    .withSteps(upload, download);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload, download] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2543,9 +2892,14 @@ Deno.test("download in different job auto-infers needs", () => {
   const upload = artifact.upload({ path: "dist/" });
   const download = artifact.download({ path: "dist/" });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(upload);
-  wf.createJob("deploy", { runsOn: "ubuntu-latest" }).withSteps(download);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
+      { id: "deploy", runsOn: "ubuntu-latest", steps: [download] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2577,8 +2931,13 @@ Deno.test("artifact with custom version", () => {
   const artifact = defineArtifact("build-output", { version: "v3" });
   const upload = artifact.upload({ path: "dist/" });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(upload);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2602,18 +2961,25 @@ Deno.test("single service serializes correctly", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("test", {
-    runsOn: "ubuntu-latest",
-    services: {
-      postgres: {
-        image: "postgres:15",
-        env: { POSTGRES_PASSWORD: "test" },
-        ports: ["5432:5432"],
-        options: "--health-cmd pg_isready --health-interval 10s",
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "test",
+        runsOn: "ubuntu-latest",
+        services: {
+          postgres: {
+            image: "postgres:15",
+            env: { POSTGRES_PASSWORD: "test" },
+            ports: ["5432:5432"],
+            options: "--health-cmd pg_isready --health-interval 10s",
+          },
+        },
+        steps: [s],
       },
-    },
-  }).withSteps(s);
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2641,20 +3007,27 @@ Deno.test("multiple services", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("test", {
-    runsOn: "ubuntu-latest",
-    services: {
-      postgres: {
-        image: "postgres:15",
-        ports: ["5432:5432"],
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "test",
+        runsOn: "ubuntu-latest",
+        services: {
+          postgres: {
+            image: "postgres:15",
+            ports: ["5432:5432"],
+          },
+          redis: {
+            image: "redis:7",
+            ports: ["6379:6379"],
+          },
+        },
+        steps: [s],
       },
-      redis: {
-        image: "redis:7",
-        ports: ["6379:6379"],
-      },
-    },
-  }).withSteps(s);
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2683,19 +3056,26 @@ Deno.test("service with credentials using ExpressionValue", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("test", {
-    runsOn: "ubuntu-latest",
-    services: {
-      registry: {
-        image: "ghcr.io/my-org/my-image:latest",
-        credentials: {
-          username: "bot",
-          password: expr("secrets.GHCR_TOKEN"),
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "test",
+        runsOn: "ubuntu-latest",
+        services: {
+          registry: {
+            image: "ghcr.io/my-org/my-image:latest",
+            credentials: {
+              username: "bot",
+              password: expr("secrets.GHCR_TOKEN"),
+            },
+          },
         },
+        steps: [s],
       },
-    },
-  }).withSteps(s);
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2721,20 +3101,27 @@ Deno.test("service env with ExpressionValue", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({ name: "test", on: {} });
-  wf.createJob("test", {
-    runsOn: "ubuntu-latest",
-    services: {
-      db: {
-        image: "postgres:15",
-        env: {
-          POSTGRES_PASSWORD: expr("secrets.DB_PASSWORD"),
-          POSTGRES_DB: "testdb",
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "test",
+        runsOn: "ubuntu-latest",
+        services: {
+          db: {
+            image: "postgres:15",
+            env: {
+              POSTGRES_PASSWORD: expr("secrets.DB_PASSWORD"),
+              POSTGRES_DB: "testdb",
+            },
+            volumes: ["data:/var/lib/postgresql/data"],
+          },
         },
-        volumes: ["data:/var/lib/postgresql/data"],
+        steps: [s],
       },
-    },
-  }).withSteps(s);
+    ],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -2768,12 +3155,9 @@ Deno.test("jobs config with plain object", () => {
   const wf = createWorkflow({
     name: "ci",
     on: { push: { branches: ["main"] } },
-    jobs: {
-      build: {
-        runsOn: "ubuntu-latest",
-        steps: [test],
-      },
-    },
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [test] },
+    ],
   });
 
   assertEquals(
@@ -2807,7 +3191,7 @@ Deno.test("jobs config with job() instance", () => {
   const wf = createWorkflow({
     name: "ci",
     on: {},
-    jobs: { build },
+    jobs: [build],
   });
 
   assertEquals(
@@ -2845,14 +3229,15 @@ Deno.test("job() with outputs enables cross-job references", () => {
   const wf = createWorkflow({
     name: "ci",
     on: {},
-    jobs: {
-      pre_build: preBuild,
-      build: {
+    jobs: [
+      preBuild,
+      {
+        id: "build",
         runsOn: "ubuntu-latest",
         if: preBuild.outputs.skip.notEquals("true"),
         steps: [buildStep],
       },
-    },
+    ],
   });
 
   assertEquals(
@@ -2885,13 +3270,14 @@ Deno.test("jobs config with reusable workflow", () => {
   const wf = createWorkflow({
     name: "ci",
     on: {},
-    jobs: {
-      deploy: {
+    jobs: [
+      {
+        id: "deploy",
         uses: "org/repo/.github/workflows/deploy.yml@main",
         with: { environment: "production" },
         secrets: "inherit",
       },
-    },
+    ],
   });
 
   assertEquals(
@@ -2908,70 +3294,19 @@ jobs:
   );
 });
 
-Deno.test("jobs config mixed with createJob", () => {
-  setup();
-  const s1 = step({ name: "Test", run: "cargo test" });
-  const s2 = step({ name: "Lint", run: "cargo clippy" });
-
-  const wf = createWorkflow({
-    name: "ci",
-    on: {},
-    jobs: {
-      test: { runsOn: "ubuntu-latest", steps: [s1] },
-    },
-  });
-  wf.createJob("lint", { runsOn: "ubuntu-latest" }).withSteps(s2);
-
-  assertEquals(
-    wf.toYamlString(),
-    `name: ci
-on: {}
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Test
-        run: cargo test
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Lint
-        run: cargo clippy
-`,
-  );
-});
-
-Deno.test("job() ID mismatch throws", () => {
-  setup();
-  const s = step({ name: "Test", run: "echo hi" });
-  const j = job("build", { runsOn: "ubuntu-latest", steps: [s] });
-
-  assertThrows(
-    () =>
-      createWorkflow({
-        name: "ci",
-        on: {},
-        jobs: { wrong_key: j },
-      }),
-    Error,
-    'Job ID mismatch: job("build") placed under key "wrong_key"',
-  );
-});
-
 Deno.test("job() with globalCondition", () => {
   setup();
   const s = step({ name: "Test", run: "echo hi" });
 
+  const build = job("build", {
+    runsOn: "ubuntu-latest",
+    steps: [s],
+  }).withGlobalCondition(conditions.isBranch("main"));
+
   const wf = createWorkflow({
     name: "ci",
     on: {},
-    jobs: {
-      build: {
-        runsOn: "ubuntu-latest",
-        steps: [s],
-        globalCondition: conditions.isBranch("main"),
-      },
-    },
+    jobs: [build],
   });
 
   assertEquals(
@@ -2986,5 +3321,109 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: echo hi
 `,
+  );
+});
+
+// --- array-based job ID resolution ---
+
+Deno.test("toKebabCase converts name to kebab-case", () => {
+  assertEquals(toKebabCase("Build & Test"), "build-test");
+  assertEquals(toKebabCase("  Hello World  "), "hello-world");
+  assertEquals(toKebabCase("CI/CD Pipeline"), "ci-cd-pipeline");
+  assertEquals(toKebabCase("already-kebab"), "already-kebab");
+  assertEquals(toKebabCase("UPPER CASE"), "upper-case");
+});
+
+Deno.test("job ID derived from name via kebab-case", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [
+      {
+        name: "Build & Test",
+        runsOn: "ubuntu-latest",
+        steps: [step({ run: "echo hi" })],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on: {}
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`,
+  );
+});
+
+Deno.test("explicit id takes precedence over name", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [
+      {
+        id: "custom_id",
+        name: "Build & Test",
+        runsOn: "ubuntu-latest",
+        steps: [step({ run: "echo hi" })],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on: {}
+jobs:
+  custom_id:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`,
+  );
+});
+
+Deno.test("resolveJobId throws when no id and no name", () => {
+  assertThrows(
+    () =>
+      resolveJobId({
+        runsOn: "ubuntu-latest",
+        steps: [step({ run: "echo hi" })],
+      }),
+    Error,
+    "must have either an `id` or a string `name`",
+  );
+});
+
+Deno.test("duplicate job id in array throws", () => {
+  setup();
+  assertThrows(
+    () =>
+      createWorkflow({
+        name: "ci",
+        on: {},
+        jobs: [
+          {
+            id: "build",
+            runsOn: "ubuntu-latest",
+            steps: [step({ run: "echo a" })],
+          },
+          {
+            id: "build",
+            runsOn: "ubuntu-latest",
+            steps: [step({ run: "echo b" })],
+          },
+        ],
+      }),
+    Error,
+    'Duplicate job id: "build"',
   );
 });

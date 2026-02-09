@@ -59,12 +59,16 @@ export interface ReusableJobConfig extends CommonJobFields {
 export type JobConfig = StepsJobConfig | ReusableJobConfig;
 
 export interface StepsJobDef extends StepsJobConfig {
+  id?: string;
   steps: StepLike[];
   outputs?: Record<string, ExpressionValue>;
-  globalCondition?: ConditionLike;
 }
 
-export type JobDef = StepsJobDef | ReusableJobConfig;
+export interface ReusableJobDef extends ReusableJobConfig {
+  id?: string;
+}
+
+export type JobDef = StepsJobDef | ReusableJobDef;
 
 export class Job implements ExpressionSource {
   readonly _id: string;
@@ -937,16 +941,35 @@ function serializeEnvironment(
   return result;
 }
 
+// --- helpers ---
+
+export function toKebabCase(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export function resolveJobId(def: JobDef): string {
+  if (def.id != null) return def.id;
+  if (def.name != null && typeof def.name === "string") {
+    return toKebabCase(def.name);
+  }
+  throw new Error(
+    "Job definition must have either an `id` or a string `name` to derive an ID from",
+  );
+}
+
 // --- job() free function ---
 
 export function job(id: string, config: JobDef): Job {
   if ("uses" in config) {
-    return new Job(id, config);
+    const { id: _id, ...reusableConfig } = config;
+    return new Job(id, reusableConfig);
   }
-  const { steps, outputs, globalCondition, ...jobConfig } = config;
+  const { id: _id, steps, outputs, ...jobConfig } = config;
   const j = new Job(id, jobConfig);
   j.withSteps(...steps);
   if (outputs != null) j.withOutputs(outputs);
-  if (globalCondition != null) j.withGlobalCondition(globalCondition);
   return j;
 }
