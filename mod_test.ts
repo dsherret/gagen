@@ -1790,3 +1790,211 @@ jobs:
 `,
   );
 });
+
+// --- reusable workflow support ---
+
+Deno.test("workflow_call trigger with inputs, outputs, and secrets", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "Reusable Build",
+    on: {
+      workflow_call: {
+        inputs: {
+          environment: { type: "string", required: true },
+          deploy: { type: "boolean", default: false },
+        },
+        outputs: {
+          artifact_name: {
+            description: "Name of the build artifact",
+            value: "${{ jobs.build.outputs.artifact }}",
+          },
+        },
+        secrets: {
+          deploy_token: { required: true },
+        },
+      },
+    },
+  });
+
+  const build = step({ name: "Build", run: "cargo build" });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(build);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: Reusable Build
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      deploy:
+        type: boolean
+        default: false
+    outputs:
+      artifact_name:
+        description: Name of the build artifact
+        value: '\${{ jobs.build.outputs.artifact }}'
+    secrets:
+      deploy_token:
+        required: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("reusable workflow job with uses and secrets inherit", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "CI",
+    on: { push: { branches: ["main"] } },
+  });
+
+  const build = step({ name: "Build", run: "cargo build" });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(build);
+
+  wf.createJob("deploy", {
+    uses: "org/repo/.github/workflows/deploy.yml@main",
+    with: { environment: "production" },
+    secrets: "inherit",
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: CI
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: cargo build
+  deploy:
+    uses: org/repo/.github/workflows/deploy.yml@main
+    with:
+      environment: production
+    secrets: inherit
+`,
+  );
+});
+
+Deno.test("reusable workflow job with object secrets", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "CI",
+    on: { push: { branches: ["main"] } },
+  });
+
+  wf.createJob("deploy", {
+    uses: "org/repo/.github/workflows/deploy.yml@main",
+    with: { environment: "production", version: 3 },
+    secrets: {
+      deploy_token: expr("secrets.DEPLOY_TOKEN"),
+      api_key: expr("secrets.API_KEY"),
+    },
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: CI
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    uses: org/repo/.github/workflows/deploy.yml@main
+    with:
+      environment: production
+      version: 3
+    secrets:
+      deploy_token: '\${{ secrets.DEPLOY_TOKEN }}'
+      api_key: '\${{ secrets.API_KEY }}'
+`,
+  );
+});
+
+Deno.test("reusable workflow job with needs and if", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "CI",
+    on: { push: { branches: ["main"] } },
+  });
+
+  const buildStep = step({ name: "Build", run: "cargo build" });
+  const buildJob = wf.createJob("build", { runsOn: "ubuntu-latest" })
+    .withSteps(buildStep);
+
+  wf.createJob("deploy", {
+    uses: "org/repo/.github/workflows/deploy.yml@main",
+    needs: [buildJob],
+    if: conditions.isTag(),
+    secrets: "inherit",
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: CI
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: cargo build
+  deploy:
+    needs:
+      - build
+    if: 'startsWith(github.ref, ''refs/tags/'')'
+    uses: org/repo/.github/workflows/deploy.yml@main
+    secrets: inherit
+`,
+  );
+});
+
+Deno.test("reusable workflow job throws on withSteps", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "CI",
+    on: { push: { branches: ["main"] } },
+  });
+
+  const job = wf.createJob("deploy", {
+    uses: "org/repo/.github/workflows/deploy.yml@main",
+  });
+
+  assertThrows(
+    () => job.withSteps(step({ run: "echo hi" })),
+    Error,
+    "Cannot add steps to a reusable workflow job",
+  );
+});
+
+Deno.test("reusable workflow job throws on withOutputs", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "CI",
+    on: { push: { branches: ["main"] } },
+  });
+
+  const job = wf.createJob("deploy", {
+    uses: "org/repo/.github/workflows/deploy.yml@main",
+  });
+
+  assertThrows(
+    () => job.withOutputs({ foo: expr("bar") }),
+    Error,
+    "Cannot add outputs to a reusable workflow job",
+  );
+});

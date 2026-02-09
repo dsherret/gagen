@@ -155,7 +155,7 @@ export function toCondition(c: ConditionLike): Condition {
   return new RawCondition(c, new Set());
 }
 
-function serializeConfigValues(
+export function serializeConfigValues(
   record: Record<string, ConfigValue>,
 ): Record<string, string | number | boolean> {
   const result: Record<string, string | number | boolean> = {};

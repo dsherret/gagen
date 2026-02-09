@@ -3,6 +3,29 @@ import { ExpressionValue } from "./expression.ts";
 import { Job, type JobConfig } from "./job.ts";
 import type { ConfigValue } from "./step.ts";
 
+export interface WorkflowCallInput {
+  type: "string" | "boolean" | "number";
+  description?: string;
+  required?: boolean;
+  default?: string | boolean | number;
+}
+
+export interface WorkflowCallOutput {
+  description?: string;
+  value: string;
+}
+
+export interface WorkflowCallSecret {
+  description?: string;
+  required?: boolean;
+}
+
+export interface WorkflowCallTrigger {
+  inputs?: Record<string, WorkflowCallInput>;
+  outputs?: Record<string, WorkflowCallOutput>;
+  secrets?: Record<string, WorkflowCallSecret>;
+}
+
 export interface WorkflowTriggers {
   push?: {
     branches?: string[];
@@ -17,6 +40,7 @@ export interface WorkflowTriggers {
     pathsIgnore?: string[];
   };
   workflow_dispatch?: Record<string, unknown>;
+  workflow_call?: WorkflowCallTrigger;
   schedule?: { cron: string }[];
   [key: string]: unknown;
 }

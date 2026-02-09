@@ -8,17 +8,23 @@ import {
   type ConditionLike,
   type ConfigValue,
   serializeConditionLike,
+  serializeConfigValues,
   Step,
   StepGroup,
   type StepLike,
   toCondition,
 } from "./step.ts";
 
-export interface JobConfig {
+interface CommonJobFields {
   name?: string | ExpressionValue;
-  runsOn: string | ExpressionValue;
   needs?: Job[];
   if?: ConditionLike;
+  permissions?: Record<string, string>;
+  concurrency?: { group: string; cancelInProgress?: boolean | string };
+}
+
+export interface StepsJobConfig extends CommonJobFields {
+  runsOn: string | ExpressionValue;
   strategy?: {
     matrix?: unknown;
     failFast?: boolean | ConditionLike;
@@ -27,13 +33,19 @@ export interface JobConfig {
   env?: Record<string, ConfigValue>;
   timeoutMinutes?: number;
   defaults?: { run?: { shell?: string; workingDirectory?: string } };
-  permissions?: Record<string, string>;
-  concurrency?: { group: string; cancelInProgress?: boolean | string };
   environment?:
     | { name: string | ExpressionValue; url?: string }
     | string
     | ExpressionValue;
 }
+
+export interface ReusableJobConfig extends CommonJobFields {
+  uses: string;
+  with?: Record<string, ConfigValue>;
+  secrets?: "inherit" | Record<string, ConfigValue>;
+}
+
+export type JobConfig = StepsJobConfig | ReusableJobConfig;
 
 export class Job implements ExpressionSource {
   readonly _id: string;
@@ -49,11 +61,17 @@ export class Job implements ExpressionSource {
   }
 
   withGlobalCondition(condition: ConditionLike): this {
+    if ("uses" in this.config) {
+      throw new Error("Cannot set global condition on a reusable workflow job");
+    }
     this.#globalCondition = toCondition(condition);
     return this;
   }
 
   withSteps(...steps: StepLike[]): this {
+    if ("uses" in this.config) {
+      throw new Error("Cannot add steps to a reusable workflow job");
+    }
     for (const s of steps) {
       if (s instanceof StepGroup) {
         this.leafSteps.push(...s.all);
@@ -65,6 +83,9 @@ export class Job implements ExpressionSource {
   }
 
   withOutputs(defs: Record<string, ExpressionValue>): this {
+    if ("uses" in this.config) {
+      throw new Error("Cannot add outputs to a reusable workflow job");
+    }
     for (const [name, stepOutput] of Object.entries(defs)) {
       this.outputDefs[name] = stepOutput;
       this.outputs[name] = new ExpressionValue(
@@ -136,27 +157,37 @@ export class Job implements ExpressionSource {
     // collect from job-level if
     collectJobSources(this.config.if, jobSources);
 
-    // collect from job-level env
-    if (this.config.env) {
-      for (const value of Object.values(this.config.env)) {
-        collectJobSources(value, jobSources);
+    if ("uses" in this.config) {
+      // reusable workflow job — collect from with/secrets
+      if (this.config.with) {
+        for (const value of Object.values(this.config.with)) {
+          collectJobSources(value, jobSources);
+        }
       }
-    }
+      if (this.config.secrets && this.config.secrets !== "inherit") {
+        for (const value of Object.values(this.config.secrets)) {
+          collectJobSources(value, jobSources);
+        }
+      }
+    } else {
+      // steps job — collect from env, runsOn, environment, strategy, steps
+      if (this.config.env) {
+        for (const value of Object.values(this.config.env)) {
+          collectJobSources(value, jobSources);
+        }
+      }
 
-    // collect from job-level runsOn
-    collectJobSources(this.config.runsOn, jobSources);
+      collectJobSources(this.config.runsOn, jobSources);
+      collectJobSources(this.config.environment, jobSources);
 
-    // collect from job-level environment
-    collectJobSources(this.config.environment, jobSources);
+      if (this.config.strategy?.failFast != null) {
+        collectJobSources(this.config.strategy.failFast, jobSources);
+      }
 
-    // collect from strategy
-    if (this.config.strategy?.failFast != null) {
-      collectJobSources(this.config.strategy.failFast, jobSources);
-    }
-
-    // collect from all step configs
-    for (const s of this.leafSteps) {
-      collectJobSourcesFromStep(s, jobSources);
+      // collect from all step configs
+      for (const s of this.leafSteps) {
+        collectJobSourcesFromStep(s, jobSources);
+      }
     }
 
     return [...jobSources];
@@ -180,6 +211,38 @@ export class Job implements ExpressionSource {
       result.if = serializeConditionLike(this.config.if);
     }
 
+    if ("uses" in this.config) {
+      // reusable workflow job
+      if (this.config.permissions != null) {
+        result.permissions = this.config.permissions;
+      }
+
+      if (this.config.concurrency != null) {
+        const c: Record<string, unknown> = {
+          group: this.config.concurrency.group,
+        };
+        if (this.config.concurrency.cancelInProgress != null) {
+          c["cancel-in-progress"] = this.config.concurrency.cancelInProgress;
+        }
+        result.concurrency = c;
+      }
+
+      result.uses = this.config.uses;
+
+      if (this.config.with != null) {
+        result.with = serializeConfigValues(this.config.with);
+      }
+
+      if (this.config.secrets != null) {
+        result.secrets = this.config.secrets === "inherit"
+          ? "inherit"
+          : serializeConfigValues(this.config.secrets);
+      }
+
+      return result;
+    }
+
+    // steps-based job
     result["runs-on"] = this.config.runsOn instanceof ExpressionValue
       ? this.config.runsOn.toString()
       : this.config.runsOn;
