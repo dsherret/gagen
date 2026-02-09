@@ -15,9 +15,8 @@ export type {
   StepsJobConfig,
   StepsJobDef,
 } from "./job.ts";
-export { createWorkflow, Workflow } from "./workflow.ts";
+export { createWorkflow, isLinting, Workflow } from "./workflow.ts";
 export type {
-  isLinting,
   WorkflowCallInput,
   WorkflowCallOutput,
   WorkflowCallSecret,
