@@ -7,3 +7,4 @@ export type { WorkflowCallInput, WorkflowCallOutput, WorkflowCallSecret, Workflo
 export { Condition, conditions, ElseIfBuilder, expr, ExpressionValue, ThenBuilder } from "./expression.ts";
 export type { ExpressionSource, TernaryValue } from "./expression.ts";
 export { defineMatrix, Matrix } from "./matrix.ts";
+export type { PermissionLevel, Permissions, PermissionScope } from "./permissions.ts";

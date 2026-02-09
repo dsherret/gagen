@@ -4,6 +4,7 @@ import {
   ExpressionValue,
 } from "./expression.ts";
 import { Matrix } from "./matrix.ts";
+import type { Permissions } from "./permissions.ts";
 import {
   type ConditionLike,
   type ConfigValue,
@@ -19,7 +20,7 @@ interface CommonJobFields {
   name?: string | ExpressionValue;
   needs?: Job[];
   if?: ConditionLike;
-  permissions?: Record<string, string>;
+  permissions?: Permissions;
   concurrency?: { group: string; cancelInProgress?: boolean | string };
 }
 

@@ -2116,3 +2116,99 @@ Deno.test("exclude keys don't add new matrix expression keys", () => {
   );
   assertEquals(keys, ["os"]);
 });
+
+// --- type-safe permissions ---
+
+Deno.test("object permissions serialize as map", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "ci",
+    on: { push: { branches: ["main"] } },
+    permissions: {
+      contents: "read",
+      "pull-requests": "write",
+      "id-token": "none",
+    },
+  });
+  wf.createJob("j", { runsOn: "ubuntu-latest" })
+    .withSteps(step({ name: "S", run: "echo hi" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on:
+  push:
+    branches:
+      - main
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: none
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: S
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("read-all permissions serialize as scalar string", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "ci",
+    on: { push: { branches: ["main"] } },
+    permissions: "read-all",
+  });
+  wf.createJob("j", { runsOn: "ubuntu-latest" })
+    .withSteps(step({ name: "S", run: "echo hi" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on:
+  push:
+    branches:
+      - main
+permissions: read-all
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: S
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("job-level permissions serialize correctly", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "ci",
+    on: { push: { branches: ["main"] } },
+  });
+  wf.createJob("j", {
+    runsOn: "ubuntu-latest",
+    permissions: { contents: "write", packages: "read" },
+  }).withSteps(step({ name: "S", run: "echo hi" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on:
+  push:
+    branches:
+      - main
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: S
+        run: echo hi
+`,
+  );
+});

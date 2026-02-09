@@ -1,6 +1,7 @@
 import { stringify } from "jsr:@std/yaml/stringify";
 import { ExpressionValue } from "./expression.ts";
 import { Job, type JobConfig } from "./job.ts";
+import type { Permissions } from "./permissions.ts";
 import type { ConfigValue } from "./step.ts";
 
 export interface WorkflowCallInput {
@@ -48,7 +49,7 @@ export interface WorkflowTriggers {
 export interface WorkflowConfig {
   name: string;
   on: WorkflowTriggers;
-  permissions?: Record<string, string>;
+  permissions?: Permissions;
   concurrency?: { group: string; cancelInProgress?: boolean | string };
   env?: Record<string, ConfigValue>;
 }
