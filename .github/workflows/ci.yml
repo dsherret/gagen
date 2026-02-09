@@ -61,6 +61,10 @@ jobs:
         with:
           node-version: "24.x"
           registry-url: "https://registry.npmjs.org"
+      - name: Install deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: canary
       - name: npm build
         run: deno task build:npm ${{steps.get_tag_version.outputs.TAG_VERSION}}
       - name: npm publish

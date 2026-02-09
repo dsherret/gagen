@@ -32,7 +32,7 @@ await build({
         "gagen",
       ).replaceAll(
         "jsr:@david/gagen",
-        "gagen"
+        "gagen",
       ),
     );
     Deno.copyFileSync("README.md", "npm/README.md");
