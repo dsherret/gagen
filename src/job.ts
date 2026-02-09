@@ -767,6 +767,12 @@ function topoSort(
         }
       }
     }
+    // also count comesAfter ordering deps
+    for (const dep of s.comesAfterDeps) {
+      if (steps.has(dep)) {
+        predecessors.add(dep);
+      }
+    }
     inDegree.set(s, predecessors.size);
   }
 
@@ -803,23 +809,32 @@ function topoSort(
     const newlyFreed: Step<string>[] = [];
     for (const s of allSteps) {
       if (s === current) continue;
-      let isDependent = false;
+      let isSuccessor = false;
       for (const dep of s.dependencies) {
         if (dep === current) {
-          isDependent = true;
+          isSuccessor = true;
           break;
         }
       }
       // check condition sources too
-      if (!isDependent && s.config.if instanceof Condition) {
+      if (!isSuccessor && s.config.if instanceof Condition) {
         for (const source of s.config.if.sources) {
           if (source === current) {
-            isDependent = true;
+            isSuccessor = true;
             break;
           }
         }
       }
-      if (isDependent) {
+      // check comesAfter deps (s.comesAfter(current) means s comes after current)
+      if (!isSuccessor) {
+        for (const dep of s.comesAfterDeps) {
+          if (dep === current) {
+            isSuccessor = true;
+            break;
+          }
+        }
+      }
+      if (isSuccessor) {
         const newDeg = (inDegree.get(s) ?? 0) - 1;
         inDegree.set(s, newDeg);
         if (newDeg === 0) {
@@ -841,10 +856,104 @@ function topoSort(
   }
 
   if (result.length !== steps.size) {
-    throw new Error("Cycle detected in step dependencies");
+    // find and report the cycle path among remaining steps
+    const remaining = new Set<Step<string>>();
+    const resultSet = new Set(result);
+    for (const s of steps) {
+      if (!resultSet.has(s)) remaining.add(s);
+    }
+
+    const cyclePath = findCyclePath(remaining);
+    throw new Error(
+      `Cycle detected in step ordering: ${
+        cyclePath.map(stepLabel).join(" → ")
+      }`,
+    );
   }
 
   return result;
+}
+
+function stepLabel(s: Step<string>): string {
+  return s.config.name ?? s.config.uses ?? s.id;
+}
+
+/** DFS on the remaining (unsorted) steps to find and return one cycle. */
+function findCyclePath(
+  remaining: Set<Step<string>>,
+): Step<string>[] {
+  // build successor map within remaining steps
+  const successors = new Map<Step<string>, Step<string>[]>();
+  for (const s of remaining) {
+    successors.set(s, []);
+  }
+  for (const s of remaining) {
+    // dependsOn edges: s depends on dep → dep is predecessor of s
+    for (const dep of s.dependencies) {
+      if (remaining.has(dep)) {
+        successors.get(dep)!.push(s);
+      }
+    }
+    // condition-source edges
+    if (s.config.if instanceof Condition) {
+      for (const source of s.config.if.sources) {
+        if (source instanceof Step && remaining.has(source as Step<string>)) {
+          successors.get(source as Step<string>)!.push(s);
+        }
+      }
+    }
+    // comesAfter edges: s.comesAfter(dep) → dep is predecessor of s
+    for (const dep of s.comesAfterDeps) {
+      if (remaining.has(dep)) {
+        successors.get(dep)!.push(s);
+      }
+    }
+  }
+
+  // dfs to find cycle
+  const visited = new Set<Step<string>>();
+  const onStack = new Set<Step<string>>();
+  const parent = new Map<Step<string>, Step<string>>();
+
+  for (const start of remaining) {
+    if (visited.has(start)) continue;
+    const stack = [start];
+    while (stack.length > 0) {
+      const node = stack[stack.length - 1];
+      if (!visited.has(node)) {
+        visited.add(node);
+        onStack.add(node);
+      }
+      let pushed = false;
+      for (const succ of successors.get(node) ?? []) {
+        if (!visited.has(succ)) {
+          parent.set(succ, node);
+          stack.push(succ);
+          pushed = true;
+          break;
+        }
+        if (onStack.has(succ)) {
+          // found cycle — trace it back
+          const cycle: Step<string>[] = [succ];
+          let cur = node;
+          while (cur !== succ) {
+            cycle.push(cur);
+            cur = parent.get(cur)!;
+          }
+          cycle.push(succ);
+          cycle.reverse();
+          return cycle;
+        }
+      }
+      if (!pushed) {
+        onStack.delete(node);
+        stack.pop();
+      }
+    }
+  }
+
+  // fallback — shouldn't happen since we know there's a cycle
+  return [...remaining];
 }
 
 // --- source collection helpers ---

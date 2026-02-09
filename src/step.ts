@@ -37,6 +37,7 @@ export class Step<O extends string = never> implements ExpressionSource {
   readonly #id: string;
   readonly config: StepConfig<O>;
   readonly dependencies: Step<string>[] = [];
+  readonly comesAfterDeps: Step<string>[] = [];
   readonly outputs: { [K in O]: ExpressionValue };
   // cross-job step references for needs inference (e.g., artifact download → upload)
   readonly _crossJobDeps: Step<string>[] = [];
@@ -77,6 +78,17 @@ export class Step<O extends string = never> implements ExpressionSource {
         this.dependencies.push(...d.all);
       } else {
         this.dependencies.push(d);
+      }
+    }
+    return this;
+  }
+
+  comesAfter(...deps: StepLike[]): this {
+    for (const d of deps) {
+      if (d instanceof StepGroup) {
+        this.comesAfterDeps.push(...d.all);
+      } else {
+        this.comesAfterDeps.push(d);
       }
     }
     return this;
@@ -197,6 +209,13 @@ export class StepGroup {
   dependsOn(...deps: StepLike[]): this {
     for (const s of this.all) {
       s.dependsOn(...deps);
+    }
+    return this;
+  }
+
+  comesAfter(...deps: StepLike[]): this {
+    for (const s of this.all) {
+      s.comesAfter(...deps);
     }
     return this;
   }

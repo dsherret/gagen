@@ -289,6 +289,40 @@ createWorkflow({
 // checkout appears only once
 ```
 
+## Ordering constraints
+
+Use `comesAfter()` to control step ordering without creating a dependency.
+Unlike `dependsOn()`, this does not pull in the step — it only ensures ordering
+when both steps are present in the same job:
+
+```ts
+const setupDeno = step({
+  uses: "denoland/setup-deno@v2",
+  with: { "deno-version": "canary" },
+});
+
+const checkout = step({ uses: "actions/checkout@v6" })
+  // ensure checkout runs after setupDeno, without making checkout depend on it
+  .comesAfter(setupDeno);
+const build = step({ run: "cargo build" }).dependsOn(checkout);
+const lint = step({ run: "deno lint" }).dependsOn(setupDeno, checkout);
+
+createWorkflow({
+  ...,
+  jobs: [
+    { id: "ci", runsOn: "ubuntu-latest", steps: [build, lint] },
+  ],
+});
+// resolves to: setupDeno → checkout → build → lint
+```
+
+If the constraint conflicts with existing dependencies (creating a cycle), the
+library throws with the cycle path:
+
+```
+Error: Cycle detected in step ordering: A → B → A
+```
+
 ## Typed matrix
 
 `defineMatrix()` gives you typed access to matrix values:
