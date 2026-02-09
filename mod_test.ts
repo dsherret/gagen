@@ -1998,3 +1998,121 @@ Deno.test("reusable workflow job throws on withOutputs", () => {
     "Cannot add outputs to a reusable workflow job",
   );
 });
+
+// --- matrix exclude ---
+
+Deno.test("matrix with exclude serializes correctly", () => {
+  setup();
+  const matrix = defineMatrix({
+    os: ["linux", "macos", "windows"],
+    node: [18, 20, 22],
+    exclude: [
+      { os: "macos", node: 18 },
+    ],
+  });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", {
+    runsOn: "ubuntu-latest",
+    strategy: { matrix },
+  }).withSteps(step({ name: "Build", run: "npm test" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+          - linux
+          - macos
+          - windows
+        node:
+          - 18
+          - 20
+          - 22
+        exclude:
+          - os: macos
+            node: 18
+    steps:
+      - name: Build
+        run: npm test
+`,
+  );
+});
+
+Deno.test("matrix exclude with include together", () => {
+  setup();
+  const matrix = defineMatrix({
+    os: ["linux", "macos"],
+    node: [18, 20],
+    include: [
+      { os: "linux", node: 22, experimental: true },
+    ],
+    exclude: [
+      { os: "macos", node: 18 },
+    ],
+  });
+
+  // include keys are available as expressions
+  assertEquals(matrix.experimental.toString(), "${{ matrix.experimental }}");
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", {
+    runsOn: "ubuntu-latest",
+    strategy: { matrix },
+  }).withSteps(step({ name: "Build", run: "npm test" }));
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+          - linux
+          - macos
+        node:
+          - 18
+          - 20
+        include:
+          - os: linux
+            node: 22
+            experimental: true
+        exclude:
+          - os: macos
+            node: 18
+    steps:
+      - name: Build
+        run: npm test
+`,
+  );
+});
+
+Deno.test("exclude keys don't add new matrix expression keys", () => {
+  setup();
+  const matrix = defineMatrix({
+    os: ["linux", "macos"],
+    exclude: [
+      { os: "macos" },
+    ],
+  });
+
+  // os is available (from key-value array)
+  assertEquals(matrix.os.toString(), "${{ matrix.os }}");
+
+  // exclude doesn't create new expression keys — only "os" exists
+  // (TypeScript also enforces this at compile time via ExtractMatrixKeys)
+  const m = matrix as unknown as Record<string, unknown>;
+  const keys = Object.keys(m).filter(
+    (k) => m[k] instanceof Object &&
+      "expression" in (m[k] as Record<string, unknown>),
+  );
+  assertEquals(keys, ["os"]);
+});
