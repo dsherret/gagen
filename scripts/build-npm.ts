@@ -30,6 +30,9 @@ await build({
       Deno.readTextFileSync("LICENSE").replaceAll(
         "jsr:@david/gagen@<version>",
         "gagen",
+      ).replaceAll(
+        "jsr:@david/gagen",
+        "gagen"
       ),
     );
     Deno.copyFileSync("README.md", "npm/README.md");
