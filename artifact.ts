@@ -20,7 +20,7 @@ export class Artifact {
 
   constructor(name: string, options?: ArtifactOptions) {
     this.name = name;
-    this.#version = options?.version ?? "v4";
+    this.#version = options?.version ?? "v6";
   }
 
   upload(config: UploadConfig): Step {

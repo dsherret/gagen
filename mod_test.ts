@@ -1791,6 +1791,119 @@ jobs:
   );
 });
 
+Deno.test("common factor extraction: (A && C) || (B && C) → C && (A || B)", () => {
+  setup();
+  const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
+  const isTag = conditions.isTag();
+  const isLinux = expr("matrix.os").equals("linux");
+  const isMac = expr("matrix.os").equals("macos");
+
+  // both leaves share isTag, differ on OS
+  const a = step({ name: "A", if: isLinux.and(isTag), run: "a" }).dependsOn(checkout);
+  const b = step({ name: "B", if: isMac.and(isTag), run: "b" }).dependsOn(checkout);
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a, b);
+
+  // checkout should get: isTag && (isLinux || isMac) — common factor extracted
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        if: 'startsWith(github.ref, ''refs/tags/'') && (matrix.os == ''linux'' || matrix.os == ''macos'')'
+      - name: A
+        if: 'matrix.os == ''linux'' && startsWith(github.ref, ''refs/tags/'')'
+        run: a
+      - name: B
+        if: 'matrix.os == ''macos'' && startsWith(github.ref, ''refs/tags/'')'
+        run: b
+`,
+  );
+});
+
+Deno.test("common factor extraction: (A && B && C) || (A && D && C) → A && C && (B || D)", () => {
+  setup();
+  const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
+  const isTag = conditions.isTag();
+  const runTests = expr("matrix.run_tests").equals("true");
+  const target1 = expr("matrix.target").equals("x86_64");
+  const target2 = expr("matrix.target").equals("aarch64");
+
+  // both share isTag && runTests, differ on target
+  const a = step({ name: "A", if: runTests.and(isTag).and(target1), run: "a" }).dependsOn(checkout);
+  const b = step({ name: "B", if: runTests.and(isTag).and(target2), run: "b" }).dependsOn(checkout);
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a, b);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        if: 'matrix.run_tests == ''true'' && startsWith(github.ref, ''refs/tags/'') && (matrix.target == ''x86_64'' || matrix.target == ''aarch64'')'
+      - name: A
+        if: 'matrix.run_tests == ''true'' && startsWith(github.ref, ''refs/tags/'') && matrix.target == ''x86_64'''
+        run: a
+      - name: B
+        if: 'matrix.run_tests == ''true'' && startsWith(github.ref, ''refs/tags/'') && matrix.target == ''aarch64'''
+        run: b
+`,
+  );
+});
+
+Deno.test("no common factor when not all branches share a term", () => {
+  setup();
+  const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
+  const isTag = conditions.isTag();
+  const isLinux = expr("matrix.os").equals("linux");
+  const isMac = expr("matrix.os").equals("macos");
+  const isWindows = expr("matrix.os").equals("windows");
+
+  // A and B share isTag, but C (isWindows) does not — no common factor
+  const a = step({ name: "A", if: isLinux.and(isTag), run: "a" }).dependsOn(checkout);
+  const b = step({ name: "B", if: isMac.and(isTag), run: "b" }).dependsOn(checkout);
+  const c = step({ name: "C", if: isWindows, run: "c" }).dependsOn(checkout);
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("j", { runsOn: "ubuntu-latest" }).withSteps(a, b, c);
+
+  // checkout should get the raw OR since no common factor across all three
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        if: '(matrix.os == ''linux'' && startsWith(github.ref, ''refs/tags/'')) || (matrix.os == ''macos'' && startsWith(github.ref, ''refs/tags/'')) || matrix.os == ''windows'''
+      - name: A
+        if: 'matrix.os == ''linux'' && startsWith(github.ref, ''refs/tags/'')'
+        run: a
+      - name: B
+        if: 'matrix.os == ''macos'' && startsWith(github.ref, ''refs/tags/'')'
+        run: b
+      - name: C
+        if: matrix.os == 'windows'
+        run: c
+`,
+  );
+});
+
 // --- reusable workflow support ---
 
 Deno.test("workflow_call trigger with inputs, outputs, and secrets", () => {
@@ -2231,7 +2344,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -2255,7 +2368,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -2282,11 +2395,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -2312,7 +2425,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -2321,7 +2434,7 @@ jobs:
       - build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: build-output
           path: dist/

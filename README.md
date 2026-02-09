@@ -377,7 +377,7 @@ wf.createJob("deploy", { runsOn: "ubuntu-latest" })
   .withSteps(deployStep);
 ```
 
-The artifact version defaults to `v4` but can be configured:
+The artifact version defaults to `v6` but can be configured:
 
 ```ts
 const artifact = defineArtifact("build-output", { version: "v3" });

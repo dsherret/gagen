@@ -492,6 +492,7 @@ function canPropagateTo(
  * 2. Deduplicates AND-terms within each condition (A && B && A → A && B)
  * 3. Complement elimination: A && X || A && !X → A (with inline OR-flattening)
  * 4. Absorption: A || (A && B) → A
+ * 5. Common factor extraction: (A && B) || (A && C) → A && (B || C)
  *
  * Note: OR-flattening is done inline during complement elimination (not upfront)
  * so that absorption can still match compound conditions against their parents.
@@ -521,6 +522,11 @@ function simplifyOrConditions(
   // 5. absorption: if A's AND-terms ⊆ B's AND-terms, B is redundant
   terms = applyAbsorption(terms);
   if (terms.length === 0) return undefined;
+  if (terms.length === 1) return terms[0];
+
+  // 6. common factor extraction: (A && B) || (A && C) → A && (B || C)
+  const factored = extractCommonFactors(terms);
+  if (factored != null) return factored;
 
   // OR the remaining conditions
   let result = terms[0];
@@ -675,6 +681,67 @@ function isSubsetOf(a: Set<string>, b: Set<string>): boolean {
     if (!b.has(term)) return false;
   }
   return true;
+}
+
+/**
+ * Extracts AND-terms common to ALL OR branches (distributive law):
+ * (A && B) || (A && C) → A && (B || C)
+ */
+function extractCommonFactors(terms: Condition[]): Condition | undefined {
+  if (terms.length < 2) return undefined;
+
+  // get AND-term string sets for each OR term
+  const termSets = terms.map((t) => new Set(t.getAndTerms()));
+
+  // intersect all sets to find common terms
+  const common = new Set(termSets[0]);
+  for (let i = 1; i < termSets.length; i++) {
+    for (const t of common) {
+      if (!termSets[i].has(t)) common.delete(t);
+    }
+  }
+
+  if (common.size === 0) return undefined;
+
+  // get common Condition objects from the first term's children
+  const firstChildren = terms[0].flattenAnd();
+  const commonConditions = firstChildren.filter((c) =>
+    common.has(c.toExpression())
+  );
+
+  // build remainders for each OR term
+  const remainders: Condition[] = [];
+  for (const term of terms) {
+    const children = term.flattenAnd();
+    const filtered = children.filter((c) => !common.has(c.toExpression()));
+    if (filtered.length === 0) {
+      // branch is entirely common — whole expression = just common terms
+      let result = commonConditions[0];
+      for (let i = 1; i < commonConditions.length; i++) {
+        result = result.and(commonConditions[i]);
+      }
+      return result;
+    }
+    let remainder = filtered[0];
+    for (let i = 1; i < filtered.length; i++) {
+      remainder = remainder.and(filtered[i]);
+    }
+    remainders.push(remainder);
+  }
+
+  // build: common1 && common2 && (remainder1 || remainder2 || ...)
+  let result = commonConditions[0];
+  for (let i = 1; i < commonConditions.length; i++) {
+    result = result.and(commonConditions[i]);
+  }
+
+  let orPart = remainders[0];
+  for (let i = 1; i < remainders.length; i++) {
+    orPart = orPart.or(remainders[i]);
+  }
+
+  result = result.and(orPart);
+  return result;
 }
 
 // --- topological sort ---
