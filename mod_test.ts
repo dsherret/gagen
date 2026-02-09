@@ -1,4 +1,7 @@
+import process from "node:process";
 import { assertEquals, assertThrows } from "@std/assert";
+import { parse } from "@std/yaml/parse";
+import { stringify } from "@std/yaml/stringify";
 import { conditions, createWorkflow, defineArtifact, defineMatrix, expr, step, steps } from "./mod.ts";
 import { resetStepCounter } from "./step.ts";
 
@@ -8,6 +11,101 @@ const { status, isTag, isBranch, isEvent } = conditions;
 function setup() {
   resetStepCounter();
 }
+
+// --- writeOrLint ---
+
+Deno.test("writeOrLint writes file when not linting", () => {
+  setup();
+  const wf = createWorkflow({ name: "ci", on: {} });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(
+    step({ name: "Test", run: "echo hi" }),
+  );
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  try {
+    wf.writeOrLint({ filePath });
+
+    const written = Deno.readTextFileSync(filePath);
+    assertEquals(written, wf.toYamlString());
+  } finally {
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint lint passes when yaml matches", () => {
+  setup();
+  const wf = createWorkflow({ name: "ci", on: {} });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(
+    step({ name: "Test", run: "echo hi" }),
+  );
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  // write the expected output
+  Deno.writeTextFileSync(filePath, wf.toYamlString());
+
+  const originalArgv = [...process.argv];
+  process.argv.push("--lint");
+  try {
+    wf.writeOrLint({ filePath });
+  } finally {
+    process.argv.length = originalArgv.length;
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint lint passes with different formatting", () => {
+  setup();
+  const wf = createWorkflow({ name: "ci", on: {} });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(
+    step({ name: "Test", run: "echo hi" }),
+  );
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  // write equivalent yaml with different formatting (re-stringify from parsed)
+  const yamlObj = parse(wf.toYamlString());
+  const reformatted = stringify(yamlObj as Record<string, unknown>, {
+    lineWidth: 80,
+  });
+  Deno.writeTextFileSync(filePath, reformatted);
+
+  const originalArgv = [...process.argv];
+  process.argv.push("--lint");
+  try {
+    wf.writeOrLint({ filePath });
+  } finally {
+    process.argv.length = originalArgv.length;
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint lint passes when file has header comment", () => {
+  setup();
+  const wf = createWorkflow({ name: "ci", on: {} });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(
+    step({ name: "Test", run: "echo hi" }),
+  );
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  // write yaml with a header comment — parse() strips comments
+  Deno.writeTextFileSync(filePath, "# generated\n" + wf.toYamlString());
+
+  const originalArgv = [...process.argv];
+  process.argv.push("--lint");
+  try {
+    wf.writeOrLint({ filePath });
+  } finally {
+    process.argv.length = originalArgv.length;
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
 
 // --- basic workflow ---
 

@@ -1,3 +1,5 @@
+import process from "node:process";
+import { parse } from "jsr:@std/yaml/parse";
 import { stringify } from "jsr:@std/yaml/stringify";
 import { ExpressionValue } from "./expression.ts";
 import { Job, type JobConfig } from "./job.ts";
@@ -126,6 +128,29 @@ export class Workflow {
 
   writeToFile(path: string | URL, options?: { header?: string }): void {
     Deno.writeTextFileSync(path, this.toYamlString(options));
+  }
+
+  writeOrLint(
+    options: { filePath: URL, header?: string },
+  ): void {
+    const expected = this.toYamlString(options);
+
+    if (process.argv.includes("--lint")) {
+      const existing = Deno.readTextFileSync(options.filePath);
+      const parsedExisting = parse(existing);
+      const parsedExpected = parse(expected);
+
+      if (
+        JSON.stringify(parsedExisting) !== JSON.stringify(parsedExpected)
+      ) {
+        console.error(
+          `Error: ${options.filePath} is out of date. Run without --lint to update.`,
+        );
+        process.exit(1);
+      }
+    } else {
+      Deno.writeTextFileSync(options.filePath, expected);
+    }
   }
 }
 
