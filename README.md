@@ -48,7 +48,8 @@ createWorkflow({
 });
 ```
 
-This generates a `ci.yml` with steps in the correct order and figures out that is should only install deno when the lint step should be run.
+This generates a `ci.yml` with steps in the correct order and figures out that
+is should only install deno when the lint step should be run.
 
 When run normally, this writes `ci.yml`. When run with `--lint`, it reads the
 existing file and compares the parsed YAML — exiting with a non-zero code if

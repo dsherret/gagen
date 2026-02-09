@@ -1,4 +1,4 @@
-import { Step } from "./step.ts";
+import { Step } from "../src/step.ts";
 
 export interface UploadConfig {
   path: string;
