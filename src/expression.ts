@@ -1,5 +1,5 @@
 // types that step/job/workflow will reference back to
-export type ExpressionSource = { readonly _id: string };
+export type ExpressionSource = { readonly id: string };
 
 const EMPTY_SOURCES: ReadonlySet<ExpressionSource> = new Set();
 

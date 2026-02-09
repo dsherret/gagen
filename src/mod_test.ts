@@ -943,7 +943,7 @@ jobs:
   );
 });
 
-Deno.test("leaf steps passed to withSteps do not get propagation", () => {
+Deno.test("leaf steps passed to steps do not get propagation", () => {
   setup();
   const a = step({
     name: "A",
@@ -954,7 +954,7 @@ Deno.test("leaf steps passed to withSteps do not get propagation", () => {
     if: expr("matrix.job").equals("test"),
   }).dependsOn(a);
 
-  // both are explicitly passed to withSteps
+  // both are explicitly passed to steps
   const wf = createWorkflow({
     name: "test",
     on: {},
@@ -1689,16 +1689,22 @@ Deno.test("toYamlString with no header by default", () => {
   assertEquals(yaml.startsWith("name: test\n"), true);
 });
 
-// --- withGlobalCondition ---
+// --- steps().if() as global condition ---
 
-Deno.test("withGlobalCondition applies to all steps", () => {
+Deno.test("steps().if() applies condition to all steps", () => {
   setup();
   const checkout = step({ uses: "actions/checkout@v6" });
   const build = step({ name: "Build", run: "make" }).dependsOn(checkout);
 
-  const j = job("j", { runsOn: "ubuntu-latest", steps: [build] })
-    .withGlobalCondition(isBranch("main"));
-  const wf = createWorkflow({ name: "test", on: {}, jobs: [j] });
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [steps(build).if(isBranch("main"))],
+    }],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1717,7 +1723,7 @@ jobs:
   );
 });
 
-Deno.test("withGlobalCondition ANDs with step condition", () => {
+Deno.test("steps().if() ANDs with step condition", () => {
   setup();
   const os = expr("matrix.os");
   const s = step({
@@ -1726,9 +1732,15 @@ Deno.test("withGlobalCondition ANDs with step condition", () => {
     if: os.equals("linux"),
   });
 
-  const j = job("j", { runsOn: "ubuntu-latest", steps: [s] })
-    .withGlobalCondition(isBranch("main"));
-  const wf = createWorkflow({ name: "test", on: {}, jobs: [j] });
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [steps(s).if(isBranch("main"))],
+    }],
+  });
 
   assertEquals(
     wf.toYamlString(),
@@ -1818,7 +1830,7 @@ jobs:
   );
 });
 
-Deno.test("steps() group passed directly to withSteps", () => {
+Deno.test("steps() group passed directly to steps", () => {
   setup();
   const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
   const group = steps(
@@ -1896,9 +1908,9 @@ Deno.test("steps() with no args throws", () => {
   );
 });
 
-// --- withSteps ordering ---
+// --- steps ordering ---
 
-Deno.test("withSteps order is respected over creation order", () => {
+Deno.test("steps order is respected over creation order", () => {
   setup();
   // create steps in one order
   const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
@@ -1934,7 +1946,7 @@ jobs:
   );
 });
 
-Deno.test("withSteps order with independent leaf steps", () => {
+Deno.test("steps order with independent leaf steps", () => {
   setup();
   const a = step({ name: "A", run: "a" });
   const b = step({ name: "B", run: "b" });
@@ -2519,32 +2531,6 @@ jobs:
     uses: org/repo/.github/workflows/deploy.yml@main
     secrets: inherit
 `,
-  );
-});
-
-Deno.test("reusable workflow job throws on withSteps", () => {
-  setup();
-  const j = job("deploy", {
-    uses: "org/repo/.github/workflows/deploy.yml@main",
-  });
-
-  assertThrows(
-    () => j.withSteps(step({ run: "echo hi" })),
-    Error,
-    "Cannot add steps to a reusable workflow job",
-  );
-});
-
-Deno.test("reusable workflow job throws on withOutputs", () => {
-  setup();
-  const j = job("deploy", {
-    uses: "org/repo/.github/workflows/deploy.yml@main",
-  });
-
-  assertThrows(
-    () => j.withOutputs({ foo: expr("bar") }),
-    Error,
-    "Cannot add outputs to a reusable workflow job",
   );
 });
 
@@ -3294,19 +3280,18 @@ jobs:
   );
 });
 
-Deno.test("job() with globalCondition", () => {
+Deno.test("job() with steps().if() condition", () => {
   setup();
   const s = step({ name: "Test", run: "echo hi" });
-
-  const build = job("build", {
-    runsOn: "ubuntu-latest",
-    steps: [s],
-  }).withGlobalCondition(conditions.isBranch("main"));
 
   const wf = createWorkflow({
     name: "ci",
     on: {},
-    jobs: [build],
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [steps(s).if(conditions.isBranch("main"))],
+    }],
   });
 
   assertEquals(

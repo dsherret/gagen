@@ -34,7 +34,7 @@ export function resetStepCounter(): void {
 export type StepLike = Step<string> | StepGroup;
 
 export class Step<O extends string = never> implements ExpressionSource {
-  readonly _id: string;
+  readonly #id: string;
   readonly config: StepConfig<O>;
   readonly dependencies: Step<string>[] = [];
   readonly outputs: { [K in O]: ExpressionValue };
@@ -50,7 +50,7 @@ export class Step<O extends string = never> implements ExpressionSource {
       );
     }
 
-    this._id = config.id ?? `_step_${stepCounter++}`;
+    this.#id = config.id ?? `_step_${stepCounter++}`;
     this.config = config;
 
     // build typed outputs
@@ -59,12 +59,16 @@ export class Step<O extends string = never> implements ExpressionSource {
       for (const name of config.outputs) {
         (outputs as Record<string, ExpressionValue>)[name] =
           new ExpressionValue(
-            `steps.${this._id}.outputs.${name}`,
+            `steps.${this.#id}.outputs.${name}`,
             this,
           );
       }
     }
     this.outputs = outputs;
+  }
+
+  get id(): string {
+    return this.#id;
   }
 
   dependsOn(...deps: StepLike[]): this {

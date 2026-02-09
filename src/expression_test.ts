@@ -124,7 +124,7 @@ Deno.test("ExpressionValue no source by default", () => {
 });
 
 Deno.test("ExpressionValue source flows into equals", () => {
-  const src = { _id: "step_1" };
+  const src = { id: "step_1" };
   const v = new ExpressionValue("steps.check.outputs.result", src);
   assertEquals(v.source, src);
   const c = v.equals("success");
@@ -133,26 +133,26 @@ Deno.test("ExpressionValue source flows into equals", () => {
 });
 
 Deno.test("ExpressionValue source flows into notEquals", () => {
-  const src = { _id: "step_1" };
+  const src = { id: "step_1" };
   const v = new ExpressionValue("steps.check.outputs.result", src);
   assertEquals(v.notEquals("fail").sources.has(src), true);
 });
 
 Deno.test("ExpressionValue source flows into startsWith", () => {
-  const src = { _id: "step_1" };
+  const src = { id: "step_1" };
   const v = new ExpressionValue("steps.check.outputs.ref", src);
   assertEquals(v.startsWith("refs/").sources.has(src), true);
 });
 
 Deno.test("ExpressionValue source flows into contains", () => {
-  const src = { _id: "step_1" };
+  const src = { id: "step_1" };
   const v = new ExpressionValue("steps.check.outputs.labels", src);
   assertEquals(v.contains("ci").sources.has(src), true);
 });
 
 Deno.test("ExpressionValue sources from two values unioned in and", () => {
-  const s1 = { _id: "s1" };
-  const s2 = { _id: "s2" };
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
   const v1 = new ExpressionValue("steps.a.outputs.x", s1);
   const v2 = new ExpressionValue("steps.b.outputs.y", s2);
   const c = v1.equals("ok").and(v2.notEquals("fail"));
@@ -162,7 +162,7 @@ Deno.test("ExpressionValue sources from two values unioned in and", () => {
 });
 
 Deno.test("ExpressionValue sourced and ambient mixed", () => {
-  const src = { _id: "job_1" };
+  const src = { id: "job_1" };
   const sourced = new ExpressionValue("needs.pre_build.outputs.skip", src);
   const ambient = new ExpressionValue("github.ref");
   const c = sourced.notEquals("true").and(ambient.startsWith("refs/tags/"));
@@ -283,15 +283,15 @@ Deno.test("Condition no sources by default", () => {
 });
 
 Deno.test("Condition sources passed to constructor are preserved", () => {
-  const src = { _id: "s1" };
+  const src = { id: "s1" };
   const c = cmp("a", "1", [src]);
   assertEquals(c.sources.size, 1);
   assertEquals(c.sources.has(src), true);
 });
 
 Deno.test("Condition and unions sources", () => {
-  const s1 = { _id: "s1" };
-  const s2 = { _id: "s2" };
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
   const c = cmp("a", "1", [s1]).and(cmp("b", "2", [s2]));
   assertEquals(c.sources.size, 2);
   assertEquals(c.sources.has(s1), true);
@@ -299,8 +299,8 @@ Deno.test("Condition and unions sources", () => {
 });
 
 Deno.test("Condition or unions sources", () => {
-  const s1 = { _id: "s1" };
-  const s2 = { _id: "s2" };
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
   const c = cmp("a", "1", [s1]).or(cmp("b", "2", [s2]));
   assertEquals(c.sources.size, 2);
   assertEquals(c.sources.has(s1), true);
@@ -308,16 +308,16 @@ Deno.test("Condition or unions sources", () => {
 });
 
 Deno.test("Condition not preserves sources", () => {
-  const s1 = { _id: "s1" };
+  const s1 = { id: "s1" };
   const c = cmp("a", "1", [s1]).not();
   assertEquals(c.sources.size, 1);
   assertEquals(c.sources.has(s1), true);
 });
 
 Deno.test("Condition complex chain unions all sources", () => {
-  const s1 = { _id: "s1" };
-  const s2 = { _id: "s2" };
-  const s3 = { _id: "s3" };
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const s3 = { id: "s3" };
   const c = cmp("a", "1", [s1])
     .and(cmp("b", "2", [s2]))
     .or(cmp("c", "3", [s3]).not());
@@ -325,7 +325,7 @@ Deno.test("Condition complex chain unions all sources", () => {
 });
 
 Deno.test("Condition duplicate sources are deduplicated", () => {
-  const s1 = { _id: "s1" };
+  const s1 = { id: "s1" };
   const c = cmp("a", "1", [s1]).and(cmp("b", "2", [s1]));
   assertEquals(c.sources.size, 1);
 });

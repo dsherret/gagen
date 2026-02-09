@@ -59,26 +59,26 @@ export interface WorkflowConfig {
 }
 
 export class Workflow {
-  readonly config: WorkflowConfig;
-  readonly jobs: Map<string, Job> = new Map<string, Job>();
+  readonly #config: WorkflowConfig;
+  readonly #jobs: Map<string, Job> = new Map<string, Job>();
 
   constructor(config: WorkflowConfig) {
-    this.config = config;
+    this.#config = config;
     if (config.jobs != null) {
       for (const jobOrDef of config.jobs) {
         let id: string;
         let resolved: Job;
         if (jobOrDef instanceof Job) {
-          id = jobOrDef._id;
+          id = jobOrDef.id;
           resolved = jobOrDef;
         } else {
           id = resolveJobId(jobOrDef);
           resolved = jobFn(id, jobOrDef);
         }
-        if (this.jobs.has(id)) {
+        if (this.#jobs.has(id)) {
           throw new Error(`Duplicate job id: "${id}"`);
         }
-        this.jobs.set(id, resolved);
+        this.#jobs.set(id, resolved);
       }
     }
   }
@@ -86,40 +86,40 @@ export class Workflow {
   toYamlString(options?: { header?: string }): string {
     const obj: Record<string, unknown> = {};
 
-    obj.name = this.config.name;
+    obj.name = this.#config.name;
 
-    obj.on = serializeTriggers(this.config.on);
+    obj.on = serializeTriggers(this.#config.on);
 
-    if (this.config.permissions != null) {
-      obj.permissions = this.config.permissions;
+    if (this.#config.permissions != null) {
+      obj.permissions = this.#config.permissions;
     }
 
-    if (this.config.concurrency != null) {
+    if (this.#config.concurrency != null) {
       const c: Record<string, unknown> = {
-        group: this.config.concurrency.group,
+        group: this.#config.concurrency.group,
       };
-      if (this.config.concurrency.cancelInProgress != null) {
-        c["cancel-in-progress"] = this.config.concurrency.cancelInProgress;
+      if (this.#config.concurrency.cancelInProgress != null) {
+        c["cancel-in-progress"] = this.#config.concurrency.cancelInProgress;
       }
       obj.concurrency = c;
     }
 
-    if (this.config.env != null) {
+    if (this.#config.env != null) {
       const env: Record<string, string | number | boolean> = {};
-      for (const [key, value] of Object.entries(this.config.env)) {
+      for (const [key, value] of Object.entries(this.#config.env)) {
         env[key] = value instanceof ExpressionValue ? value.toString() : value;
       }
       obj.env = env;
     }
 
     // pre-resolve all jobs to establish step→job mappings for cross-job deps
-    for (const job of this.jobs.values()) {
+    for (const job of this.#jobs.values()) {
       job.resolveSteps();
     }
 
     // jobs
     const jobs: Record<string, unknown> = {};
-    for (const [id, job] of this.jobs) {
+    for (const [id, job] of this.#jobs) {
       jobs[id] = job.toYaml();
     }
     obj.jobs = jobs;

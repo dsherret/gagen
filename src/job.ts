@@ -60,7 +60,7 @@ export type JobConfig = StepsJobConfig | ReusableJobConfig;
 
 export interface StepsJobDef extends StepsJobConfig {
   id?: string;
-  steps: StepLike[];
+  steps: StepLike[] | StepGroup;
   outputs?: Record<string, ExpressionValue>;
 }
 
@@ -71,52 +71,46 @@ export interface ReusableJobDef extends ReusableJobConfig {
 export type JobDef = StepsJobDef | ReusableJobDef;
 
 export class Job implements ExpressionSource {
-  readonly _id: string;
-  readonly config: JobConfig;
-  readonly leafSteps: Step<string>[] = [];
-  readonly outputDefs: Record<string, ExpressionValue> = {};
+  readonly #id: string;
+  readonly #config: JobConfig;
+  readonly #leafSteps: Step<string>[] = [];
+  readonly #outputDefs: Record<string, ExpressionValue> = {};
   readonly outputs: Record<string, ExpressionValue> = {};
-  #globalCondition?: Condition;
 
-  constructor(id: string, config: JobConfig) {
-    this._id = id;
-    this.config = config;
-  }
+  constructor(
+    id: string,
+    config: JobConfig,
+    init?: {
+      steps?: StepLike[];
+      outputs?: Record<string, ExpressionValue>;
+    },
+  ) {
+    this.#id = id;
+    this.#config = config;
 
-  withGlobalCondition(condition: ConditionLike): this {
-    if ("uses" in this.config) {
-      throw new Error("Cannot set global condition on a reusable workflow job");
-    }
-    this.#globalCondition = toCondition(condition);
-    return this;
-  }
-
-  withSteps(...steps: StepLike[]): this {
-    if ("uses" in this.config) {
-      throw new Error("Cannot add steps to a reusable workflow job");
-    }
-    for (const s of steps) {
-      if (s instanceof StepGroup) {
-        this.leafSteps.push(...s.all);
-      } else {
-        this.leafSteps.push(s);
+    if (init?.steps) {
+      for (const s of init.steps) {
+        if (s instanceof StepGroup) {
+          this.#leafSteps.push(...s.all);
+        } else {
+          this.#leafSteps.push(s);
+        }
       }
     }
-    return this;
+
+    if (init?.outputs) {
+      for (const [name, stepOutput] of Object.entries(init.outputs)) {
+        this.#outputDefs[name] = stepOutput;
+        this.outputs[name] = new ExpressionValue(
+          `needs.${this.#id}.outputs.${name}`,
+          this,
+        );
+      }
+    }
   }
 
-  withOutputs(defs: Record<string, ExpressionValue>): this {
-    if ("uses" in this.config) {
-      throw new Error("Cannot add outputs to a reusable workflow job");
-    }
-    for (const [name, stepOutput] of Object.entries(defs)) {
-      this.outputDefs[name] = stepOutput;
-      this.outputs[name] = new ExpressionValue(
-        `needs.${this._id}.outputs.${name}`,
-        this,
-      );
-    }
-    return this;
+  get id(): string {
+    return this.#id;
   }
 
   resolveSteps(): Step<string>[] {
@@ -137,13 +131,13 @@ export class Job implements ExpressionSource {
         }
       }
     };
-    for (const leaf of this.leafSteps) {
+    for (const leaf of this.#leafSteps) {
       collect(leaf);
     }
 
     // compute priority: each step gets the minimum leaf index of any
     // leaf step that transitively depends on it (directly or via
-    // condition sources). This makes the topo sort respect withSteps order.
+    // condition sources). This makes the topo sort respect steps order.
     const priority = new Map<Step<string>, number>();
     const assignPriority = (s: Step<string>, p: number) => {
       const current = priority.get(s);
@@ -162,8 +156,8 @@ export class Job implements ExpressionSource {
         }
       }
     };
-    for (let i = 0; i < this.leafSteps.length; i++) {
-      assignPriority(this.leafSteps[i], i);
+    for (let i = 0; i < this.#leafSteps.length; i++) {
+      assignPriority(this.#leafSteps[i], i);
     }
 
     const sorted = topoSort(allSteps, priority);
@@ -175,45 +169,46 @@ export class Job implements ExpressionSource {
   }
 
   inferNeeds(): Job[] {
+    const config = this.#config;
     const jobSources = new Set<Job>();
 
     // explicit needs
-    if (this.config.needs) {
-      for (const j of this.config.needs) jobSources.add(j);
+    if (config.needs) {
+      for (const j of config.needs) jobSources.add(j);
     }
 
     // collect from job-level if
-    collectJobSources(this.config.if, jobSources);
+    collectJobSources(config.if, jobSources);
 
-    if ("uses" in this.config) {
+    if ("uses" in config) {
       // reusable workflow job — collect from with/secrets
-      if (this.config.with) {
-        for (const value of Object.values(this.config.with)) {
+      if (config.with) {
+        for (const value of Object.values(config.with)) {
           collectJobSources(value, jobSources);
         }
       }
-      if (this.config.secrets && this.config.secrets !== "inherit") {
-        for (const value of Object.values(this.config.secrets)) {
+      if (config.secrets && config.secrets !== "inherit") {
+        for (const value of Object.values(config.secrets)) {
           collectJobSources(value, jobSources);
         }
       }
     } else {
       // steps job — collect from env, runsOn, environment, strategy, steps
-      if (this.config.env) {
-        for (const value of Object.values(this.config.env)) {
+      if (config.env) {
+        for (const value of Object.values(config.env)) {
           collectJobSources(value, jobSources);
         }
       }
 
-      collectJobSources(this.config.runsOn, jobSources);
-      collectJobSources(this.config.environment, jobSources);
+      collectJobSources(config.runsOn, jobSources);
+      collectJobSources(config.environment, jobSources);
 
-      if (this.config.strategy?.failFast != null) {
-        collectJobSources(this.config.strategy.failFast, jobSources);
+      if (config.strategy?.failFast != null) {
+        collectJobSources(config.strategy.failFast, jobSources);
       }
 
       // collect from all step configs
-      for (const s of this.leafSteps) {
+      for (const s of this.#leafSteps) {
         collectJobSourcesFromStep(s, jobSources);
       }
     }
@@ -223,135 +218,136 @@ export class Job implements ExpressionSource {
   }
 
   toYaml(): Record<string, unknown> {
+    const config = this.#config;
     const result: Record<string, unknown> = {};
 
-    if (this.config.name != null) {
-      result.name = this.config.name instanceof ExpressionValue
-        ? this.config.name.toString()
-        : this.config.name;
+    if (config.name != null) {
+      result.name = config.name instanceof ExpressionValue
+        ? config.name.toString()
+        : config.name;
     }
 
     const needs = this.inferNeeds();
     if (needs.length > 0) {
-      result.needs = needs.map((j) => j._id);
+      result.needs = needs.map((j) => j.id);
     }
 
-    if (this.config.if != null) {
-      result.if = serializeConditionLike(this.config.if);
+    if (config.if != null) {
+      result.if = serializeConditionLike(config.if);
     }
 
-    if ("uses" in this.config) {
+    if ("uses" in config) {
       // reusable workflow job
-      if (this.config.permissions != null) {
-        result.permissions = this.config.permissions;
+      if (config.permissions != null) {
+        result.permissions = config.permissions;
       }
 
-      if (this.config.concurrency != null) {
+      if (config.concurrency != null) {
         const c: Record<string, unknown> = {
-          group: this.config.concurrency.group,
+          group: config.concurrency.group,
         };
-        if (this.config.concurrency.cancelInProgress != null) {
-          c["cancel-in-progress"] = this.config.concurrency.cancelInProgress;
+        if (config.concurrency.cancelInProgress != null) {
+          c["cancel-in-progress"] = config.concurrency.cancelInProgress;
         }
         result.concurrency = c;
       }
 
-      result.uses = this.config.uses;
+      result.uses = config.uses;
 
-      if (this.config.with != null) {
-        result.with = serializeConfigValues(this.config.with);
+      if (config.with != null) {
+        result.with = serializeConfigValues(config.with);
       }
 
-      if (this.config.secrets != null) {
-        result.secrets = this.config.secrets === "inherit"
+      if (config.secrets != null) {
+        result.secrets = config.secrets === "inherit"
           ? "inherit"
-          : serializeConfigValues(this.config.secrets);
+          : serializeConfigValues(config.secrets);
       }
 
       return result;
     }
 
     // steps-based job
-    result["runs-on"] = this.config.runsOn instanceof ExpressionValue
-      ? this.config.runsOn.toString()
-      : this.config.runsOn;
+    result["runs-on"] = config.runsOn instanceof ExpressionValue
+      ? config.runsOn.toString()
+      : config.runsOn;
 
-    if (this.config.permissions != null) {
-      result.permissions = this.config.permissions;
+    if (config.permissions != null) {
+      result.permissions = config.permissions;
     }
 
-    if (this.config.environment != null) {
-      result.environment = serializeEnvironment(this.config.environment);
+    if (config.environment != null) {
+      result.environment = serializeEnvironment(config.environment);
     }
 
-    if (this.config.concurrency != null) {
+    if (config.concurrency != null) {
       const c: Record<string, unknown> = {
-        group: this.config.concurrency.group,
+        group: config.concurrency.group,
       };
-      if (this.config.concurrency.cancelInProgress != null) {
-        c["cancel-in-progress"] = this.config.concurrency.cancelInProgress;
+      if (config.concurrency.cancelInProgress != null) {
+        c["cancel-in-progress"] = config.concurrency.cancelInProgress;
       }
       result.concurrency = c;
     }
 
-    if (this.config.timeoutMinutes != null) {
-      result["timeout-minutes"] = this.config.timeoutMinutes;
+    if (config.timeoutMinutes != null) {
+      result["timeout-minutes"] = config.timeoutMinutes;
     }
 
-    if (this.config.defaults != null) {
+    if (config.defaults != null) {
       const d: Record<string, unknown> = {};
-      if (this.config.defaults.run) {
+      if (config.defaults.run) {
         const run: Record<string, unknown> = {};
-        if (this.config.defaults.run.shell != null) {
-          run.shell = this.config.defaults.run.shell;
+        if (config.defaults.run.shell != null) {
+          run.shell = config.defaults.run.shell;
         }
-        if (this.config.defaults.run.workingDirectory != null) {
-          run["working-directory"] = this.config.defaults.run.workingDirectory;
+        if (config.defaults.run.workingDirectory != null) {
+          run["working-directory"] = config.defaults.run.workingDirectory;
         }
         d.run = run;
       }
       result.defaults = d;
     }
 
-    if (this.config.strategy != null) {
+    if (config.strategy != null) {
       const s: Record<string, unknown> = {};
-      if (this.config.strategy.matrix != null) {
-        s.matrix = this.config.strategy.matrix instanceof Matrix
-          ? this.config.strategy.matrix.toYaml()
-          : this.config.strategy.matrix;
+      if (config.strategy.matrix != null) {
+        s.matrix = config.strategy.matrix instanceof Matrix
+          ? config.strategy.matrix.toYaml()
+          : config.strategy.matrix;
       }
-      if (this.config.strategy.failFast != null) {
-        const ff = this.config.strategy.failFast;
+      if (config.strategy.failFast != null) {
+        const ff = config.strategy.failFast;
         s["fail-fast"] = typeof ff === "boolean"
           ? ff
           : serializeConditionLike(ff);
       }
-      if (this.config.strategy.maxParallel != null) {
-        s["max-parallel"] = this.config.strategy.maxParallel;
+      if (config.strategy.maxParallel != null) {
+        s["max-parallel"] = config.strategy.maxParallel;
       }
       result.strategy = s;
     }
 
-    if (this.config.env != null) {
+    if (config.env != null) {
       const env: Record<string, string | number | boolean> = {};
-      for (const [key, value] of Object.entries(this.config.env)) {
+      for (const [key, value] of Object.entries(config.env)) {
         env[key] = value instanceof ExpressionValue ? value.toString() : value;
       }
       result.env = env;
     }
 
-    if (this.config.services != null) {
+    if (config.services != null) {
       const services: Record<string, unknown> = {};
-      for (const [name, svc] of Object.entries(this.config.services)) {
+      for (const [name, svc] of Object.entries(config.services)) {
         services[name] = serializeService(svc);
       }
       result.services = services;
     }
 
     // outputs
-    if (Object.keys(this.outputDefs).length > 0) {
+    if (Object.keys(this.#outputDefs).length > 0) {
       const outputs: Record<string, string> = {};
-      for (const [name, exprValue] of Object.entries(this.outputDefs)) {
+      for (const [name, exprValue] of Object.entries(this.#outputDefs)) {
         outputs[name] = exprValue.toString();
       }
       result.outputs = outputs;
@@ -361,16 +357,10 @@ export class Job implements ExpressionSource {
     const resolvedSteps = this.resolveSteps();
     const effectiveConditions = computeEffectiveConditions(
       resolvedSteps,
-      this.leafSteps,
+      this.#leafSteps,
     );
     result.steps = resolvedSteps.map((s) => {
-      let effective = effectiveConditions.get(s);
-      if (this.#globalCondition != null) {
-        effective = effective != null
-          ? deduplicateAndTerms(this.#globalCondition.and(effective))
-          : this.#globalCondition;
-      }
-      return s.toYaml(effective);
+      return s.toYaml(effectiveConditions.get(s));
     });
 
     return result;
@@ -414,7 +404,7 @@ function computeEffectiveConditions(
     }
   }
 
-  // steps explicitly passed to withSteps should not receive propagated
+  // steps explicitly passed to steps should not receive propagated
   // conditions — the user declared them directly, so they keep their own if
   const leafSet = new Set<Step<string>>(leafSteps);
 
@@ -794,7 +784,7 @@ function topoSort(
     return (setOrder.get(a) ?? 0) - (setOrder.get(b) ?? 0);
   };
 
-  // kahn's algorithm — process in priority order to respect withSteps ordering
+  // kahn's algorithm — process in priority order to respect steps ordering
   const queue: Step<string>[] = [];
   for (const s of steps) {
     if ((inDegree.get(s) ?? 0) === 0) {
@@ -968,8 +958,8 @@ export function job(id: string, config: JobDef): Job {
     return new Job(id, reusableConfig);
   }
   const { id: _id, steps, outputs, ...jobConfig } = config;
-  const j = new Job(id, jobConfig);
-  j.withSteps(...steps);
-  if (outputs != null) j.withOutputs(outputs);
-  return j;
+  return new Job(id, jobConfig, {
+    steps: steps instanceof StepGroup ? [steps] : steps,
+    outputs,
+  });
 }
