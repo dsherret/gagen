@@ -58,6 +58,14 @@ export interface ReusableJobConfig extends CommonJobFields {
 
 export type JobConfig = StepsJobConfig | ReusableJobConfig;
 
+export interface StepsJobDef extends StepsJobConfig {
+  steps: StepLike[];
+  outputs?: Record<string, ExpressionValue>;
+  globalCondition?: ConditionLike;
+}
+
+export type JobDef = StepsJobDef | ReusableJobConfig;
+
 export class Job implements ExpressionSource {
   readonly _id: string;
   readonly config: JobConfig;
@@ -927,4 +935,18 @@ function serializeEnvironment(
   };
   if (env.url != null) result.url = env.url;
   return result;
+}
+
+// --- job() free function ---
+
+export function job(id: string, config: JobDef): Job {
+  if ("uses" in config) {
+    return new Job(id, config);
+  }
+  const { steps, outputs, globalCondition, ...jobConfig } = config;
+  const j = new Job(id, jobConfig);
+  j.withSteps(...steps);
+  if (outputs != null) j.withOutputs(outputs);
+  if (globalCondition != null) j.withGlobalCondition(globalCondition);
+  return j;
 }

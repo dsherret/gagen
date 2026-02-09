@@ -1,0 +1,47 @@
+name: ci
+
+on: [push, pull_request]
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  deno:
+    name: service-store
+    if: |
+      github.event_name == 'push' ||
+      !startsWith(github.event.pull_request.head.label, 'dsherret:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: canary
+
+      - name: fmt
+        run: deno fmt --check
+
+      - name: lint
+        run: deno lint
+
+      - name: test
+        run: deno test -A
+
+  jsr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: canary
+      - name: Publish to JSR on tag
+        run: deno run -A jsr:@david/publish-on-tag@0.2.0

@@ -8,6 +8,7 @@ import {
   defineArtifact,
   defineMatrix,
   expr,
+  job,
   step,
   steps,
 } from "./mod.ts";
@@ -2753,6 +2754,237 @@ jobs:
     steps:
       - name: Test
         run: npm test
+`,
+  );
+});
+
+// --- job() function and jobs config ---
+
+Deno.test("jobs config with plain object", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const test = step({ name: "Test", run: "cargo test" }).dependsOn(checkout);
+
+  const wf = createWorkflow({
+    name: "ci",
+    on: { push: { branches: ["main"] } },
+    jobs: {
+      build: {
+        runsOn: "ubuntu-latest",
+        steps: [test],
+      },
+    },
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test
+        run: cargo test
+`,
+  );
+});
+
+Deno.test("jobs config with job() instance", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const test = step({ name: "Test", run: "cargo test" }).dependsOn(checkout);
+
+  const build = job("build", {
+    runsOn: "ubuntu-latest",
+    steps: [test],
+  });
+
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: { build },
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test
+        run: cargo test
+`,
+  );
+});
+
+Deno.test("job() with outputs enables cross-job references", () => {
+  setup();
+  const checkStep = step({
+    id: "check",
+    name: "Check",
+    run: "echo 'skip=true' >> $GITHUB_OUTPUT",
+    outputs: ["skip"],
+  });
+
+  const preBuild = job("pre_build", {
+    runsOn: "ubuntu-latest",
+    steps: [checkStep],
+    outputs: { skip: checkStep.outputs.skip },
+  });
+
+  const buildStep = step({ name: "Build", run: "make build" });
+
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: {
+      pre_build: preBuild,
+      build: {
+        runsOn: "ubuntu-latest",
+        if: preBuild.outputs.skip.notEquals("true"),
+        steps: [buildStep],
+      },
+    },
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on: {}
+jobs:
+  pre_build:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: '\${{ steps.check.outputs.skip }}'
+    steps:
+      - name: Check
+        id: check
+        run: echo 'skip=true' >> $GITHUB_OUTPUT
+  build:
+    needs:
+      - pre_build
+    if: needs.pre_build.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: make build
+`,
+  );
+});
+
+Deno.test("jobs config with reusable workflow", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: {
+      deploy: {
+        uses: "org/repo/.github/workflows/deploy.yml@main",
+        with: { environment: "production" },
+        secrets: "inherit",
+      },
+    },
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on: {}
+jobs:
+  deploy:
+    uses: org/repo/.github/workflows/deploy.yml@main
+    with:
+      environment: production
+    secrets: inherit
+`,
+  );
+});
+
+Deno.test("jobs config mixed with createJob", () => {
+  setup();
+  const s1 = step({ name: "Test", run: "cargo test" });
+  const s2 = step({ name: "Lint", run: "cargo clippy" });
+
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: {
+      test: { runsOn: "ubuntu-latest", steps: [s1] },
+    },
+  });
+  wf.createJob("lint", { runsOn: "ubuntu-latest" }).withSteps(s2);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: cargo test
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lint
+        run: cargo clippy
+`,
+  );
+});
+
+Deno.test("job() ID mismatch throws", () => {
+  setup();
+  const s = step({ name: "Test", run: "echo hi" });
+  const j = job("build", { runsOn: "ubuntu-latest", steps: [s] });
+
+  assertThrows(
+    () =>
+      createWorkflow({
+        name: "ci",
+        on: {},
+        jobs: { wrong_key: j },
+      }),
+    Error,
+    'Job ID mismatch: job("build") placed under key "wrong_key"',
+  );
+});
+
+Deno.test("job() with globalCondition", () => {
+  setup();
+  const s = step({ name: "Test", run: "echo hi" });
+
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: {
+      build: {
+        runsOn: "ubuntu-latest",
+        steps: [s],
+        globalCondition: conditions.isBranch("main"),
+      },
+    },
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        if: github.ref == 'refs/heads/main'
+        run: echo hi
 `,
   );
 });

@@ -2,7 +2,7 @@ import process from "node:process";
 import { parse } from "@std/yaml/parse";
 import { stringify } from "@std/yaml/stringify";
 import { ExpressionValue } from "./expression.ts";
-import { Job, type JobConfig } from "./job.ts";
+import { Job, job as jobFn, type JobConfig, type JobDef } from "./job.ts";
 import type { Permissions } from "./permissions.ts";
 import type { ConfigValue } from "./step.ts";
 
@@ -54,6 +54,7 @@ export interface WorkflowConfig {
   permissions?: Permissions;
   concurrency?: { group: string; cancelInProgress?: boolean | string };
   env?: Record<string, ConfigValue>;
+  jobs?: Record<string, JobDef | Job>;
 }
 
 export class Workflow {
@@ -62,6 +63,23 @@ export class Workflow {
 
   constructor(config: WorkflowConfig) {
     this.config = config;
+    if (config.jobs != null) {
+      for (const [id, jobOrDef] of Object.entries(config.jobs)) {
+        if (this.jobs.has(id)) {
+          throw new Error(`Duplicate job id: "${id}"`);
+        }
+        if (jobOrDef instanceof Job) {
+          if (jobOrDef._id !== id) {
+            throw new Error(
+              `Job ID mismatch: job("${jobOrDef._id}") placed under key "${id}"`,
+            );
+          }
+          this.jobs.set(id, jobOrDef);
+        } else {
+          this.jobs.set(id, jobFn(id, jobOrDef));
+        }
+      }
+    }
   }
 
   createJob(id: string, config: JobConfig): Job {

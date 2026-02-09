@@ -5,12 +5,14 @@ export type {
   StepConfig,
   StepLike,
 } from "./step.ts";
-export { Job } from "./job.ts";
+export { Job, job } from "./job.ts";
 export type {
   JobConfig,
+  JobDef,
   ReusableJobConfig,
   ServiceContainer,
   StepsJobConfig,
+  StepsJobDef,
 } from "./job.ts";
 export { createWorkflow, Workflow } from "./workflow.ts";
 export type {
