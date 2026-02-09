@@ -102,6 +102,11 @@ export class Workflow {
       obj.env = env;
     }
 
+    // pre-resolve all jobs to establish step→job mappings for cross-job deps
+    for (const job of this.jobs.values()) {
+      job.resolveSteps();
+    }
+
     // jobs
     const jobs: Record<string, unknown> = {};
     for (const [id, job] of this.jobs) {

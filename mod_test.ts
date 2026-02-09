@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import { conditions, createWorkflow, defineMatrix, expr, step, steps } from "./mod.ts";
+import { conditions, createWorkflow, defineArtifact, defineMatrix, expr, step, steps } from "./mod.ts";
 import { resetStepCounter } from "./step.ts";
 
 const { status, isTag, isBranch, isEvent } = conditions;
@@ -2209,6 +2209,146 @@ jobs:
     steps:
       - name: S
         run: echo hi
+`,
+  );
+});
+
+// --- artifact linking ---
+
+Deno.test("upload step serializes correctly", () => {
+  setup();
+  const artifact = defineArtifact("build-output");
+  const upload = artifact.upload({ path: "dist/" });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(upload);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: dist/
+`,
+  );
+});
+
+Deno.test("upload step with custom retention days", () => {
+  setup();
+  const artifact = defineArtifact("build-output");
+  const upload = artifact.upload({ path: "dist/", retentionDays: 5 });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(upload);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: dist/
+          retention-days: 5
+`,
+  );
+});
+
+Deno.test("download in same job doesn't add needs", () => {
+  setup();
+  const artifact = defineArtifact("build-output");
+  const upload = artifact.upload({ path: "dist/" });
+  const download = artifact.download({ path: "dist/" });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", { runsOn: "ubuntu-latest" })
+    .withSteps(upload, download);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: dist/
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: dist/
+`,
+  );
+});
+
+Deno.test("download in different job auto-infers needs", () => {
+  setup();
+  const artifact = defineArtifact("build-output");
+  const upload = artifact.upload({ path: "dist/" });
+  const download = artifact.download({ path: "dist/" });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(upload);
+  wf.createJob("deploy", { runsOn: "ubuntu-latest" }).withSteps(download);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: dist/
+  deploy:
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: dist/
+`,
+  );
+});
+
+Deno.test("artifact with custom version", () => {
+  setup();
+  const artifact = defineArtifact("build-output", { version: "v3" });
+  const upload = artifact.upload({ path: "dist/" });
+
+  const wf = createWorkflow({ name: "test", on: {} });
+  wf.createJob("build", { runsOn: "ubuntu-latest" }).withSteps(upload);
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v3
+        with:
+          name: build-output
+          path: dist/
 `,
   );
 });

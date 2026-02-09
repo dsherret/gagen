@@ -144,7 +144,12 @@ export class Job implements ExpressionSource {
       assignPriority(this.leafSteps[i], i);
     }
 
-    return topoSort(allSteps, priority);
+    const sorted = topoSort(allSteps, priority);
+    // set job reference on each resolved step for cross-job needs inference
+    for (const s of sorted) {
+      s._job = this;
+    }
+    return sorted;
   }
 
   inferNeeds(): Job[] {
@@ -191,7 +196,8 @@ export class Job implements ExpressionSource {
       }
     }
 
-    return [...jobSources];
+    // filter out self-references (can happen with cross-job deps in the same job)
+    return [...jobSources].filter((j) => j !== this);
   }
 
   toYaml(): Record<string, unknown> {
@@ -788,6 +794,12 @@ function collectJobSourcesFromStep(
   collectJobSources(s.config.if, out);
   if (s.config.with) collectJobSources(s.config.with, out);
   if (s.config.env) collectJobSources(s.config.env, out);
+  // check cross-job step dependencies (e.g., artifact download → upload)
+  for (const dep of s._crossJobDeps) {
+    if (dep._job instanceof Job) {
+      out.add(dep._job);
+    }
+  }
   // walk dependencies recursively
   for (const dep of s.dependencies) {
     collectJobSourcesFromStep(dep, out, visited);

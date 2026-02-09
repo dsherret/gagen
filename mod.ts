@@ -8,3 +8,5 @@ export { Condition, conditions, ElseIfBuilder, expr, ExpressionValue, ThenBuilde
 export type { ExpressionSource, TernaryValue } from "./expression.ts";
 export { defineMatrix, Matrix } from "./matrix.ts";
 export type { PermissionLevel, Permissions, PermissionScope } from "./permissions.ts";
+export { Artifact, defineArtifact } from "./artifact.ts";
+export type { ArtifactOptions, DownloadConfig, UploadConfig } from "./artifact.ts";
