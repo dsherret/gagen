@@ -5,6 +5,11 @@
 
 Generate complex GitHub Actions YAML files using a declarative API.
 
+Gagen lets you define workflows in TypeScript with a fluent, declarative API
+that automatically resolves step ordering and propagates conditions. The
+condition propagation helps skip unnecessary setup steps and eliminates needing
+to repeat condition text over and over again.
+
 ## Basic usage
 
 ```ts
@@ -38,7 +43,10 @@ const lint = steps(
     name: "Deno Lint",
     run: "deno lint",
   }).dependsOn(installDeno),
-).if(conditions.isBranch("main").not()).dependsOn(checkout);
+)
+  .dependsOn(checkout)
+  // this condition gets propagated to installDeno, but not checkout
+  .if(conditions.isBranch("main").not());
 
 // only specify the leaf steps — the other steps are pulled in automatically
 createWorkflow({
@@ -63,9 +71,11 @@ existing file and compares the parsed YAML — exiting with a non-zero code if
 they differ. This lets you add a CI step to verify the generated file is up to
 date:
 
-```yaml
-- name: Lint CI generation
-  run: ./.github/workflows/ci.generate.ts --lint
+```ts
+const lintStep = step({
+  name: "Lint CI generation",
+  run: "./.github/workflows/ci.generate.ts --lint",
+});
 ```
 
 ## Conditions
