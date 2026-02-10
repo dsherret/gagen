@@ -25,9 +25,10 @@ await build({
     },
   },
   postBuild() {
+    Deno.copyFileSync("LICENSE", "npm/LICENSE");
     Deno.writeTextFileSync(
-      "npm/LICENSE",
-      Deno.readTextFileSync("LICENSE").replaceAll(
+      "npm/README.md",
+      Deno.readTextFileSync("README.md").replaceAll(
         "jsr:@david/gagen@<version>",
         "gagen",
       ).replaceAll(
@@ -35,6 +36,5 @@ await build({
         "gagen",
       ),
     );
-    Deno.copyFileSync("README.md", "npm/README.md");
   },
 });
