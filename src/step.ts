@@ -49,8 +49,6 @@ export class Step<O extends string = never> implements ExpressionSource {
   readonly outputs: { readonly [K in O]: ExpressionValue };
   // cross-job step references for needs inference (e.g., artifact download → upload)
   readonly _crossJobDeps: readonly Step<string>[];
-  // set by Job.resolveSteps() — the job that owns this step
-  _job?: ExpressionSource;
 
   constructor(config: StepConfig<O>, _state?: _StepState) {
     if (!_state && config.outputs?.length && !config.id) {
