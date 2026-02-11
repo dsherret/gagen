@@ -33,37 +33,28 @@ export function resetStepCounter(): void {
 
 export type StepLike = Step<string> | StepGroup;
 
-// internal state for creating derived (cloned) steps without incrementing the counter
-interface _StepState {
-  id: string;
-  dependencies: readonly Step<string>[];
-  comesAfterDeps: readonly Step<string>[];
-  crossJobDeps: readonly Step<string>[];
-}
-
 export class Step<O extends string = never> implements ExpressionSource {
   readonly #id: string;
-  readonly config: Readonly<StepConfig<O>>;
-  readonly dependencies: readonly Step<string>[];
-  readonly comesAfterDeps: readonly Step<string>[];
-  readonly outputs: { readonly [K in O]: ExpressionValue };
+  readonly config: StepConfig<O>;
+  readonly dependencies: Step<string>[] = [];
+  readonly comesAfterDeps: Step<string>[] = [];
+  readonly outputs: { [K in O]: ExpressionValue };
   // cross-job step references for needs inference (e.g., artifact download → upload)
-  readonly _crossJobDeps: readonly Step<string>[];
+  readonly _crossJobDeps: Step<string>[] = [];
+  // set by Job.resolveSteps() — the job that owns this step
+  _job?: ExpressionSource;
 
-  constructor(config: StepConfig<O>, _state?: _StepState) {
-    if (!_state && config.outputs?.length && !config.id) {
+  constructor(config: StepConfig<O>) {
+    if (config.outputs?.length && !config.id) {
       throw new Error(
         "Step with outputs must have an explicit id",
       );
     }
 
-    this.#id = _state?.id ?? config.id ?? `_step_${stepCounter++}`;
+    this.#id = config.id ?? `_step_${stepCounter++}`;
     this.config = config;
-    this.dependencies = _state?.dependencies ?? [];
-    this.comesAfterDeps = _state?.comesAfterDeps ?? [];
-    this._crossJobDeps = _state?.crossJobDeps ?? [];
 
-    // build typed outputs (always regenerated so they reference this instance)
+    // build typed outputs
     const outputs = {} as { [K in O]: ExpressionValue };
     if (config.outputs) {
       for (const name of config.outputs) {
@@ -81,63 +72,26 @@ export class Step<O extends string = never> implements ExpressionSource {
     return this.#id;
   }
 
-  dependsOn(...deps: StepLike[]): Step<O> {
-    const newDeps: Step<string>[] = [...this.dependencies];
+  dependsOn(...deps: StepLike[]): this {
     for (const d of deps) {
       if (d instanceof StepGroup) {
-        newDeps.push(...d.all);
+        this.dependencies.push(...d.all);
       } else {
-        newDeps.push(d);
+        this.dependencies.push(d);
       }
     }
-    return new Step(this.config, {
-      id: this.#id,
-      dependencies: newDeps,
-      comesAfterDeps: this.comesAfterDeps,
-      crossJobDeps: this._crossJobDeps,
-    });
+    return this;
   }
 
-  comesAfter(...deps: StepLike[]): Step<O> {
-    const newDeps: Step<string>[] = [...this.comesAfterDeps];
+  comesAfter(...deps: StepLike[]): this {
     for (const d of deps) {
       if (d instanceof StepGroup) {
-        newDeps.push(...d.all);
+        this.comesAfterDeps.push(...d.all);
       } else {
-        newDeps.push(d);
+        this.comesAfterDeps.push(d);
       }
     }
-    return new Step(this.config, {
-      id: this.#id,
-      dependencies: this.dependencies,
-      comesAfterDeps: newDeps,
-      crossJobDeps: this._crossJobDeps,
-    });
-  }
-
-  if(condition: ConditionLike): Step<O> {
-    const cond = toCondition(condition);
-    const newIf = this.config.if != null
-      ? cond.and(toCondition(this.config.if))
-      : cond;
-    return new Step(
-      { ...this.config, if: newIf },
-      {
-        id: this.#id,
-        dependencies: this.dependencies,
-        comesAfterDeps: this.comesAfterDeps,
-        crossJobDeps: this._crossJobDeps,
-      },
-    );
-  }
-
-  _withCrossJobDep(dep: Step<string>): Step<O> {
-    return new Step(this.config, {
-      id: this.#id,
-      dependencies: this.dependencies,
-      comesAfterDeps: this.comesAfterDeps,
-      crossJobDeps: [...this._crossJobDeps, dep],
-    });
+    return this;
   }
 
   toYaml(effectiveIf?: Condition): Record<string, unknown> {
@@ -234,22 +188,36 @@ export function serializeConfigValues(
 // --- step group ---
 
 export class StepGroup {
-  readonly all: readonly Step<string>[];
+  readonly all: Step<string>[];
 
-  constructor(steps: readonly Step<string>[]) {
+  constructor(steps: Step<string>[]) {
     this.all = steps;
   }
 
-  if(condition: ConditionLike): StepGroup {
-    return new StepGroup(this.all.map((s) => s.if(condition)));
+  if(condition: ConditionLike): this {
+    const cond = toCondition(condition);
+    for (const s of this.all) {
+      if (s.config.if != null) {
+        s.config.if = cond.and(toCondition(s.config.if));
+      } else {
+        s.config.if = cond;
+      }
+    }
+    return this;
   }
 
-  dependsOn(...deps: StepLike[]): StepGroup {
-    return new StepGroup(this.all.map((s) => s.dependsOn(...deps)));
+  dependsOn(...deps: StepLike[]): this {
+    for (const s of this.all) {
+      s.dependsOn(...deps);
+    }
+    return this;
   }
 
-  comesAfter(...deps: StepLike[]): StepGroup {
-    return new StepGroup(this.all.map((s) => s.comesAfter(...deps)));
+  comesAfter(...deps: StepLike[]): this {
+    for (const s of this.all) {
+      s.comesAfter(...deps);
+    }
+    return this;
   }
 }
 
