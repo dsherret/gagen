@@ -838,10 +838,24 @@ function tryComplementMerge(
   return result;
 }
 
-/** Checks whether two expression strings are boolean complements (!X vs X). */
+/** Checks whether two expression strings are boolean complements (!X vs X, or X == Y vs X != Y). */
 function areComplements(a: string, b: string): boolean {
-  return a === `!${b}` || a === `!(${b})` ||
-    b === `!${a}` || b === `!(${a})`;
+  if (
+    a === `!${b}` || a === `!(${b})` ||
+    b === `!${a}` || b === `!(${a})`
+  ) {
+    return true;
+  }
+  // check for `X == Y` vs `X != Y`
+  const eqA = a.indexOf(" == ");
+  const neA = a.indexOf(" != ");
+  if (eqA !== -1) {
+    return b === a.slice(0, eqA) + " != " + a.slice(eqA + 4);
+  }
+  if (neA !== -1) {
+    return b === a.slice(0, neA) + " == " + a.slice(neA + 4);
+  }
+  return false;
 }
 
 function applyAbsorption(terms: Condition[]): Condition[] {

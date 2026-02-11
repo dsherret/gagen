@@ -1584,7 +1584,7 @@ jobs:
           - cross: 'false'
     steps:
       - name: Build
-        if: '!(matrix.cross == ''true'')'
+        if: matrix.cross != 'true'
         run: make
 `,
   );
@@ -2035,7 +2035,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Build
-        if: 'startsWith(github.ref, ''refs/tags/'') && !(matrix.cross == ''true'')'
+        if: 'startsWith(github.ref, ''refs/tags/'') && matrix.cross != ''true'''
         run: cargo build
       - name: Build cross
         if: 'startsWith(github.ref, ''refs/tags/'') && matrix.cross == ''true'''
