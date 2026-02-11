@@ -485,15 +485,16 @@ jobs:
 Deno.test("cycle detection throws with cycle path", () => {
   setup();
   const a = step({ name: "A" });
-  const b = step({ name: "B" }).dependsOn(a);
+  const b = step({ name: "B" });
   // create cycle: a depends on b, b depends on a
-  a.dependsOn(b);
+  const bRef = b.dependsOn(a);
+  const aRef = a.dependsOn(bRef);
 
   const wf = createWorkflow({
     name: "test",
     on: {},
     jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [a] },
+      { id: "j", runsOn: "ubuntu-latest", steps: [aRef] },
     ],
   });
 
@@ -3421,14 +3422,13 @@ Deno.test("comesAfter puts step after another", () => {
     uses: "denoland/setup-deno@v2",
     with: { "deno-version": "canary" },
   });
-  const checkout = step({ uses: "actions/checkout@v6" });
+  const checkoutStep = step({ uses: "actions/checkout@v6" });
+  const checkout = checkoutStep.comesAfter(setupDeno);
   const build = step({ name: "Build", run: "cargo build" }).dependsOn(checkout);
   const lint = step({ name: "Lint", run: "deno lint" }).dependsOn(
     setupDeno,
     checkout,
   );
-
-  checkout.comesAfter(setupDeno);
 
   const wf = createWorkflow({
     name: "test",
@@ -3465,13 +3465,13 @@ Deno.test("comesAfter between two independent steps", () => {
   const c = step({ name: "C", run: "c" });
 
   // force A after C, despite passing order [a, b, c]
-  a.comesAfter(c);
+  const aRef = a.comesAfter(c);
 
   const wf = createWorkflow({
     name: "test",
     on: {},
     jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [a, b, c] },
+      { id: "j", runsOn: "ubuntu-latest", steps: [aRef, b, c] },
     ],
   });
 
@@ -3500,13 +3500,13 @@ Deno.test("comesAfter does not pull in steps", () => {
   const b = step({ name: "B", run: "b" });
 
   // b.comesAfter(a) but only b is in the job — a should NOT be pulled in
-  b.comesAfter(a);
+  const bRef = b.comesAfter(a);
 
   const wf = createWorkflow({
     name: "test",
     on: {},
     jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [b] },
+      { id: "j", runsOn: "ubuntu-latest", steps: [bRef] },
     ],
   });
 
@@ -3527,16 +3527,17 @@ jobs:
 Deno.test("comesAfter conflict with dependsOn throws cycle error", () => {
   setup();
   const a = step({ name: "A" });
-  const b = step({ name: "B" }).dependsOn(a);
+  const b = step({ name: "B" });
 
   // b depends on a (b after a), but a.comesAfter(b) means a must come after b
-  a.comesAfter(b);
+  const bRef = b.dependsOn(a);
+  const aRef = a.comesAfter(bRef);
 
   const wf = createWorkflow({
     name: "test",
     on: {},
     jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [a, b] },
+      { id: "j", runsOn: "ubuntu-latest", steps: [aRef, bRef] },
     ],
   });
 
@@ -3552,14 +3553,14 @@ Deno.test("comesAfter mutual constraint throws cycle error", () => {
   const a = step({ name: "A" });
   const b = step({ name: "B" });
 
-  a.comesAfter(b);
-  b.comesAfter(a);
+  const aRef = a.comesAfter(b);
+  const bRef = b.comesAfter(a);
 
   const wf = createWorkflow({
     name: "test",
     on: {},
     jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [a, b] },
+      { id: "j", runsOn: "ubuntu-latest", steps: [aRef, bRef] },
     ],
   });
 
@@ -3580,13 +3581,13 @@ Deno.test("comesAfter does not affect condition propagation", () => {
   });
 
   // b comes after a, but a should NOT inherit b's condition
-  b.comesAfter(a);
+  const bRef = b.comesAfter(a);
 
   const wf = createWorkflow({
     name: "test",
     on: {},
     jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [a, b] },
+      { id: "j", runsOn: "ubuntu-latest", steps: [a, bRef] },
     ],
   });
 
@@ -3610,10 +3611,8 @@ jobs:
 Deno.test("comesAfter compatible with dependsOn (same direction)", () => {
   setup();
   const a = step({ name: "A" });
-  const b = step({ name: "B" }).dependsOn(a);
-
-  // redundant but compatible: b already comes after a
-  b.comesAfter(a);
+  // redundant but compatible: b already comes after a via dependsOn
+  const b = step({ name: "B" }).dependsOn(a).comesAfter(a);
 
   const wf = createWorkflow({
     name: "test",
@@ -3667,6 +3666,49 @@ jobs:
         run: build-a
       - name: Build B
         run: build-b
+`,
+  );
+});
+
+Deno.test("same step with different .if() in different jobs stays independent", () => {
+  setup();
+  const shared = step({ name: "Shared", run: "shared" });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "job1",
+        runsOn: "ubuntu-latest",
+        steps: [shared.if("github.ref == 'refs/heads/main'")],
+      },
+      {
+        id: "job2",
+        runsOn: "ubuntu-latest",
+        steps: [shared.if("github.event_name == 'pull_request'")],
+      },
+    ],
+  });
+
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  job1:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Shared
+        if: github.ref == 'refs/heads/main'
+        run: shared
+  job2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Shared
+        if: github.event_name == 'pull_request'
+        run: shared
 `,
   );
 });

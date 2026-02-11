@@ -46,14 +46,13 @@ export class Artifact {
     if (config.path != null) {
       withObj.path = config.path;
     }
-    const s = new Step({
-      uses: `actions/download-artifact@${this.#version}`,
-      with: withObj,
-    });
-    if (this.#uploadStep) {
-      s._crossJobDeps.push(this.#uploadStep);
-    }
-    return s;
+    return new Step(
+      {
+        uses: `actions/download-artifact@${this.#version}`,
+        with: withObj,
+      },
+      this.#uploadStep ? [this.#uploadStep] : [],
+    );
   }
 }
 

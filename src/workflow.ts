@@ -4,7 +4,7 @@ import { stringify } from "@std/yaml/stringify";
 import { ExpressionValue } from "./expression.ts";
 import { Job, job as jobFn, type JobDef, resolveJobId } from "./job.ts";
 import type { Permissions } from "./permissions.ts";
-import type { ConfigValue } from "./step.ts";
+import type { ConfigValue, Step } from "./step.ts";
 import fs from "node:fs";
 
 export interface WorkflowCallInput {
@@ -112,15 +112,23 @@ export class Workflow {
       obj.env = env;
     }
 
-    // pre-resolve all jobs to establish step→job mappings for cross-job deps
+    // pre-resolve all jobs and build step→job mapping for cross-job deps
+    const stepOwners = new Map<Step<string>, Job[]>();
     for (const job of this.#jobs.values()) {
-      job.resolveSteps();
+      for (const s of job.resolveSteps()) {
+        let owners = stepOwners.get(s);
+        if (!owners) {
+          owners = [];
+          stepOwners.set(s, owners);
+        }
+        owners.push(job);
+      }
     }
 
     // jobs
     const jobs: Record<string, unknown> = {};
     for (const [id, job] of this.#jobs) {
-      jobs[id] = job.toYaml();
+      jobs[id] = job.toYaml(stepOwners);
     }
     obj.jobs = jobs;
 

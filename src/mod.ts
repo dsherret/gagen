@@ -1,4 +1,4 @@
-export { Step, step, StepGroup, steps } from "./step.ts";
+export { Step, step, StepGroup, StepRef, steps } from "./step.ts";
 export type {
   ConditionLike,
   ConfigValue,

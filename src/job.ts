@@ -13,6 +13,7 @@ import {
   Step,
   StepGroup,
   type StepLike,
+  StepRef,
   toCondition,
 } from "./step.ts";
 
@@ -70,12 +71,158 @@ export interface ReusableJobDef extends ReusableJobConfig {
 
 export type JobDef = StepsJobDef | ReusableJobDef;
 
+// --- per-job dependency graph ---
+
+interface GraphEntry {
+  deps: Set<Step<string>>;
+  afterDeps: Set<Step<string>>;
+  condition?: ConditionLike;
+}
+
+function ensureEntry(
+  graph: Map<Step<string>, GraphEntry>,
+  step: Step<string>,
+): GraphEntry {
+  let entry = graph.get(step);
+  if (!entry) {
+    entry = { deps: new Set(), afterDeps: new Set() };
+    graph.set(step, entry);
+  }
+  return entry;
+}
+
+/** Adds a condition to a graph entry, ANDing with any existing condition. */
+function addEntryCondition(
+  entry: GraphEntry,
+  condition: ConditionLike,
+): void {
+  if (entry.condition != null) {
+    entry.condition = toCondition(condition).and(toCondition(entry.condition));
+  } else {
+    entry.condition = condition;
+  }
+}
+
+interface DeferredAfterDep {
+  step: Step<string>;
+  target: StepLike;
+}
+
+/**
+ * Recursively flattens a StepLike tree into a flat graph of Steps with
+ * per-job dependencies and conditions.
+ *
+ * afterDependencies (comesAfter) are NOT flattened into the graph — they are
+ * collected in `deferredAfterDeps` and resolved later, so that comesAfter
+ * only adds ordering edges for steps already present in the graph.
+ */
+function flattenStepLike(
+  item: StepLike,
+  graph: Map<Step<string>, GraphEntry>,
+  isLeaf: boolean,
+  leafSteps: Step<string>[],
+  deferredAfterDeps: DeferredAfterDep[],
+): void {
+  if (item instanceof Step) {
+    ensureEntry(graph, item);
+    if (isLeaf) leafSteps.push(item);
+  } else if (item instanceof StepRef) {
+    const step = item.step as Step<string>;
+    const entry = ensureEntry(graph, step);
+    if (isLeaf) leafSteps.push(step);
+
+    if (item.condition != null) {
+      addEntryCondition(entry, item.condition);
+    }
+
+    for (const dep of item.dependencies) {
+      flattenDep(dep, entry.deps, graph, deferredAfterDeps);
+    }
+
+    for (const dep of item.afterDependencies) {
+      deferredAfterDeps.push({ step, target: dep });
+    }
+  } else if (item instanceof StepGroup) {
+    for (const s of item.all) {
+      flattenStepLike(s, graph, isLeaf, leafSteps, deferredAfterDeps);
+      const step = s instanceof StepRef ? s.step as Step<string> : s;
+      const entry = graph.get(step)!;
+
+      if (item.condition != null) {
+        addEntryCondition(entry, item.condition);
+      }
+
+      for (const dep of item.dependencies) {
+        flattenDep(dep, entry.deps, graph, deferredAfterDeps);
+      }
+
+      for (const dep of item.afterDependencies) {
+        deferredAfterDeps.push({ step, target: dep });
+      }
+    }
+  }
+}
+
+/** Flattens a dependency target into the graph and adds it to a dep set. */
+function flattenDep(
+  dep: StepLike,
+  targetSet: Set<Step<string>>,
+  graph: Map<Step<string>, GraphEntry>,
+  deferredAfterDeps: DeferredAfterDep[],
+): void {
+  if (dep instanceof StepGroup) {
+    for (const s of dep.all) {
+      const step = s instanceof StepRef ? s.step as Step<string> : s;
+      targetSet.add(step);
+    }
+    flattenStepLike(dep, graph, false, [], deferredAfterDeps);
+  } else {
+    const s = dep instanceof StepRef ? dep.step as Step<string> : dep;
+    targetSet.add(s);
+    flattenStepLike(dep, graph, false, [], deferredAfterDeps);
+  }
+}
+
+/**
+ * Adds condition-source steps as deps in the graph. Iterates until stable
+ * because condition sources may bring in new steps whose own conditions
+ * reference additional steps.
+ */
+function addConditionSourceDeps(
+  graph: Map<Step<string>, GraphEntry>,
+): void {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [step, entry] of [...graph]) {
+      for (const cond of [step.config.if, entry.condition]) {
+        if (!(cond instanceof Condition)) continue;
+        for (const source of cond.sources) {
+          if (!(source instanceof Step)) continue;
+          const srcStep = source as Step<string>;
+          if (!graph.has(srcStep)) {
+            ensureEntry(graph, srcStep);
+            changed = true;
+          }
+          entry.deps.add(srcStep);
+        }
+      }
+    }
+  }
+}
+
+// --- Job class ---
+
 export class Job implements ExpressionSource {
   readonly #id: string;
   readonly #config: JobConfig;
-  readonly #leafSteps: Step<string>[] = [];
+  readonly #leafItems: StepLike[] = [];
   readonly #outputDefs: Record<string, ExpressionValue> = {};
-  readonly outputs: Record<string, ExpressionValue> = {};
+  readonly outputs: Readonly<Record<string, ExpressionValue>> = {};
+
+  // cached graph — built lazily
+  #cachedGraph?: Map<Step<string>, GraphEntry>;
+  #cachedLeafSteps?: Step<string>[];
 
   constructor(
     id: string,
@@ -90,18 +237,15 @@ export class Job implements ExpressionSource {
 
     if (init?.steps) {
       for (const s of init.steps) {
-        if (s instanceof StepGroup) {
-          this.#leafSteps.push(...s.all);
-        } else {
-          this.#leafSteps.push(s);
-        }
+        this.#leafItems.push(s);
       }
     }
 
     if (init?.outputs) {
+      const outputs = this.outputs as Record<string, ExpressionValue>;
       for (const [name, stepOutput] of Object.entries(init.outputs)) {
         this.#outputDefs[name] = stepOutput;
-        this.outputs[name] = new ExpressionValue(
+        outputs[name] = new ExpressionValue(
           `needs.${this.#id}.outputs.${name}`,
           this,
         );
@@ -113,27 +257,49 @@ export class Job implements ExpressionSource {
     return this.#id;
   }
 
-  resolveSteps(): Step<string>[] {
-    // collect all reachable steps from leaves
-    const allSteps = new Set<Step<string>>();
-    const collect = (s: Step<string>) => {
-      if (allSteps.has(s)) return;
-      allSteps.add(s);
-      for (const dep of s.dependencies) {
-        collect(dep);
-      }
-      // also collect steps referenced in if-conditions
-      if (s.config.if instanceof Condition) {
-        for (const source of s.config.if.sources) {
-          if (source instanceof Step) {
-            collect(source as Step<string>);
-          }
-        }
-      }
-    };
-    for (const leaf of this.#leafSteps) {
-      collect(leaf);
+  #buildGraph(): {
+    graph: Map<Step<string>, GraphEntry>;
+    leafSteps: Step<string>[];
+  } {
+    if (this.#cachedGraph && this.#cachedLeafSteps) {
+      return { graph: this.#cachedGraph, leafSteps: this.#cachedLeafSteps };
     }
+
+    const graph = new Map<Step<string>, GraphEntry>();
+    const leafSteps: Step<string>[] = [];
+    const deferredAfterDeps: DeferredAfterDep[] = [];
+
+    for (const item of this.#leafItems) {
+      flattenStepLike(item, graph, true, leafSteps, deferredAfterDeps);
+    }
+
+    addConditionSourceDeps(graph);
+
+    // resolve deferred after-deps: only add ordering edges for steps
+    // already present in the graph (comesAfter does not pull in steps)
+    for (const { step, target } of deferredAfterDeps) {
+      const entry = graph.get(step)!;
+      if (target instanceof StepGroup) {
+        for (const s of target.all) {
+          const t = s instanceof StepRef ? s.step as Step<string> : s;
+          if (graph.has(t)) entry.afterDeps.add(t);
+        }
+      } else {
+        const t = target instanceof StepRef
+          ? target.step as Step<string>
+          : target;
+        if (graph.has(t)) entry.afterDeps.add(t);
+      }
+    }
+
+    this.#cachedGraph = graph;
+    this.#cachedLeafSteps = leafSteps;
+    return { graph, leafSteps };
+  }
+
+  resolveSteps(): Step<string>[] {
+    const { graph, leafSteps } = this.#buildGraph();
+    const allSteps = new Set(graph.keys());
 
     // compute priority: each step gets the minimum leaf index of any
     // leaf step that transitively depends on it (directly or via
@@ -143,32 +309,22 @@ export class Job implements ExpressionSource {
       const current = priority.get(s);
       if (current !== undefined && current <= p) return;
       priority.set(s, p);
-      for (const dep of s.dependencies) {
+      const entry = graph.get(s);
+      if (!entry) return;
+      for (const dep of entry.deps) {
         if (allSteps.has(dep)) {
           assignPriority(dep, p);
         }
       }
-      if (s.config.if instanceof Condition) {
-        for (const source of s.config.if.sources) {
-          if (source instanceof Step && allSteps.has(source as Step<string>)) {
-            assignPriority(source as Step<string>, p);
-          }
-        }
-      }
     };
-    for (let i = 0; i < this.#leafSteps.length; i++) {
-      assignPriority(this.#leafSteps[i], i);
+    for (let i = 0; i < leafSteps.length; i++) {
+      assignPriority(leafSteps[i], i);
     }
 
-    const sorted = topoSort(allSteps, priority);
-    // set job reference on each resolved step for cross-job needs inference
-    for (const s of sorted) {
-      s._job = this;
-    }
-    return sorted;
+    return topoSort(allSteps, priority, graph);
   }
 
-  inferNeeds(): Job[] {
+  inferNeeds(stepOwners?: Map<Step<string>, Job[]>): Job[] {
     const config = this.#config;
     const jobSources = new Set<Job>();
 
@@ -207,17 +363,16 @@ export class Job implements ExpressionSource {
         collectJobSources(config.strategy.failFast, jobSources);
       }
 
-      // collect from all step configs
-      for (const s of this.#leafSteps) {
-        collectJobSourcesFromStep(s, jobSources);
-      }
+      // collect from all steps in the graph
+      const { graph } = this.#buildGraph();
+      collectJobSourcesFromGraph(graph, jobSources, stepOwners);
     }
 
     // filter out self-references (can happen with cross-job deps in the same job)
     return [...jobSources].filter((j) => j !== this);
   }
 
-  toYaml(): Record<string, unknown> {
+  toYaml(stepOwners?: Map<Step<string>, Job[]>): Record<string, unknown> {
     const config = this.#config;
     const result: Record<string, unknown> = {};
 
@@ -227,7 +382,7 @@ export class Job implements ExpressionSource {
         : config.name;
     }
 
-    const needs = this.inferNeeds();
+    const needs = this.inferNeeds(stepOwners);
     if (needs.length > 0) {
       result.needs = needs.map((j) => j.id);
     }
@@ -354,10 +509,12 @@ export class Job implements ExpressionSource {
     }
 
     // steps
+    const { graph, leafSteps } = this.#buildGraph();
     const resolvedSteps = this.resolveSteps();
     const effectiveConditions = computeEffectiveConditions(
       resolvedSteps,
-      this.#leafSteps,
+      leafSteps,
+      graph,
     );
     result.steps = resolvedSteps.map((s) => {
       return s.toYaml(effectiveConditions.get(s));
@@ -372,6 +529,7 @@ export class Job implements ExpressionSource {
 function computeEffectiveConditions(
   sortedSteps: Step<string>[],
   leafSteps: Step<string>[],
+  graph: Map<Step<string>, GraphEntry>,
 ): Map<Step<string>, Condition | undefined> {
   const posMap = new Map<Step<string>, number>();
   for (let i = 0; i < sortedSteps.length; i++) {
@@ -389,22 +547,15 @@ function computeEffectiveConditions(
     set.add(s);
   };
   for (const s of sortedSteps) {
-    for (const dep of s.dependencies) {
+    const entry = graph.get(s)!;
+    for (const dep of entry.deps) {
       if (posMap.has(dep)) {
         addDependent(dep, s);
       }
     }
-    // condition-inferred dependencies (matches topo sort edges)
-    if (s.config.if instanceof Condition) {
-      for (const source of s.config.if.sources) {
-        if (source instanceof Step && posMap.has(source as Step<string>)) {
-          addDependent(source as Step<string>, s);
-        }
-      }
-    }
   }
 
-  // steps explicitly passed to steps should not receive propagated
+  // steps explicitly passed as leaves should not receive propagated
   // conditions — the user declared them directly, so they keep their own if
   const leafSet = new Set<Step<string>>(leafSteps);
 
@@ -413,7 +564,8 @@ function computeEffectiveConditions(
 
   for (let i = sortedSteps.length - 1; i >= 0; i--) {
     const s = sortedSteps[i];
-    const ownIf = s.config.if != null ? toCondition(s.config.if) : undefined;
+    const entry = graph.get(s)!;
+    const ownIf = getOwnCondition(s.config.if, entry.condition);
 
     if (leafSet.has(s)) {
       // explicitly added by user — no propagation
@@ -464,6 +616,21 @@ function computeEffectiveConditions(
   }
 
   return effective;
+}
+
+/** Combines config.if (intrinsic) with context condition (per-job). */
+function getOwnCondition(
+  configIf?: ConditionLike,
+  contextCondition?: ConditionLike,
+): Condition | undefined {
+  const configCond = configIf != null ? toCondition(configIf) : undefined;
+  const ctxCond = contextCondition != null
+    ? toCondition(contextCondition)
+    : undefined;
+  if (configCond != null && ctxCond != null) {
+    return ctxCond.and(configCond);
+  }
+  return ctxCond ?? configCond;
 }
 
 // a condition can propagate backward to a step at targetPos only if none of
@@ -749,26 +916,19 @@ function extractCommonFactors(terms: Condition[]): Condition | undefined {
 function topoSort(
   steps: Set<Step<string>>,
   priority: Map<Step<string>, number>,
+  graph: Map<Step<string>, GraphEntry>,
 ): Step<string>[] {
   // build in-degree map (only counting unique predecessors within our set)
   const inDegree = new Map<Step<string>, number>();
   for (const s of steps) {
+    const entry = graph.get(s)!;
     const predecessors = new Set<Step<string>>();
-    for (const dep of s.dependencies) {
+    for (const dep of entry.deps) {
       if (steps.has(dep)) {
         predecessors.add(dep);
       }
     }
-    // also count condition-inferred deps (deduplicated via Set)
-    if (s.config.if instanceof Condition) {
-      for (const source of s.config.if.sources) {
-        if (source instanceof Step && steps.has(source as Step<string>)) {
-          predecessors.add(source as Step<string>);
-        }
-      }
-    }
-    // also count comesAfter ordering deps
-    for (const dep of s.comesAfterDeps) {
+    for (const dep of entry.afterDeps) {
       if (steps.has(dep)) {
         predecessors.add(dep);
       }
@@ -809,31 +969,9 @@ function topoSort(
     const newlyFreed: Step<string>[] = [];
     for (const s of allSteps) {
       if (s === current) continue;
-      let isSuccessor = false;
-      for (const dep of s.dependencies) {
-        if (dep === current) {
-          isSuccessor = true;
-          break;
-        }
-      }
-      // check condition sources too
-      if (!isSuccessor && s.config.if instanceof Condition) {
-        for (const source of s.config.if.sources) {
-          if (source === current) {
-            isSuccessor = true;
-            break;
-          }
-        }
-      }
-      // check comesAfter deps (s.comesAfter(current) means s comes after current)
-      if (!isSuccessor) {
-        for (const dep of s.comesAfterDeps) {
-          if (dep === current) {
-            isSuccessor = true;
-            break;
-          }
-        }
-      }
+      const entry = graph.get(s)!;
+      const isSuccessor = entry.deps.has(current) ||
+        entry.afterDeps.has(current);
       if (isSuccessor) {
         const newDeg = (inDegree.get(s) ?? 0) - 1;
         inDegree.set(s, newDeg);
@@ -863,7 +1001,7 @@ function topoSort(
       if (!resultSet.has(s)) remaining.add(s);
     }
 
-    const cyclePath = findCyclePath(remaining);
+    const cyclePath = findCyclePath(remaining, graph);
     throw new Error(
       `Cycle detected in step ordering: ${
         cyclePath.map(stepLabel).join(" → ")
@@ -881,6 +1019,7 @@ function stepLabel(s: Step<string>): string {
 /** DFS on the remaining (unsorted) steps to find and return one cycle. */
 function findCyclePath(
   remaining: Set<Step<string>>,
+  graph: Map<Step<string>, GraphEntry>,
 ): Step<string>[] {
   // build successor map within remaining steps
   const successors = new Map<Step<string>, Step<string>[]>();
@@ -888,22 +1027,15 @@ function findCyclePath(
     successors.set(s, []);
   }
   for (const s of remaining) {
-    // dependsOn edges: s depends on dep → dep is predecessor of s
-    for (const dep of s.dependencies) {
+    const entry = graph.get(s)!;
+    // deps: s depends on dep → dep is predecessor of s
+    for (const dep of entry.deps) {
       if (remaining.has(dep)) {
         successors.get(dep)!.push(s);
       }
     }
-    // condition-source edges
-    if (s.config.if instanceof Condition) {
-      for (const source of s.config.if.sources) {
-        if (source instanceof Step && remaining.has(source as Step<string>)) {
-          successors.get(source as Step<string>)!.push(s);
-        }
-      }
-    }
-    // comesAfter edges: s.comesAfter(dep) → dep is predecessor of s
-    for (const dep of s.comesAfterDeps) {
+    // afterDeps: s comesAfter dep → dep is predecessor of s
+    for (const dep of entry.afterDeps) {
       if (remaining.has(dep)) {
         successors.get(dep)!.push(s);
       }
@@ -978,25 +1110,24 @@ function collectJobSources(value: unknown, out: Set<Job>): void {
   }
 }
 
-function collectJobSourcesFromStep(
-  s: Step<string>,
+function collectJobSourcesFromGraph(
+  graph: Map<Step<string>, GraphEntry>,
   out: Set<Job>,
-  visited = new Set<Step<string>>(),
+  stepOwners?: Map<Step<string>, Job[]>,
 ): void {
-  if (visited.has(s)) return;
-  visited.add(s);
-  collectJobSources(s.config.if, out);
-  if (s.config.with) collectJobSources(s.config.with, out);
-  if (s.config.env) collectJobSources(s.config.env, out);
-  // check cross-job step dependencies (e.g., artifact download → upload)
-  for (const dep of s._crossJobDeps) {
-    if (dep._job instanceof Job) {
-      out.add(dep._job);
+  for (const [step, entry] of graph) {
+    collectJobSources(step.config.if, out);
+    collectJobSources(entry.condition, out);
+    if (step.config.with) collectJobSources(step.config.with, out);
+    if (step.config.env) collectJobSources(step.config.env, out);
+    if (stepOwners) {
+      for (const dep of step._crossJobDeps) {
+        const owners = stepOwners.get(dep);
+        if (owners) {
+          for (const j of owners) out.add(j);
+        }
+      }
     }
-  }
-  // walk dependencies recursively
-  for (const dep of s.dependencies) {
-    collectJobSourcesFromStep(dep, out, visited);
   }
 }
 
