@@ -598,9 +598,9 @@ export class Job implements ExpressionSource {
       }
       if (config.strategy.failFast != null) {
         const ff = config.strategy.failFast;
-        s["fail-fast"] = typeof ff === "boolean"
+        s["fail-fast"] = typeof ff === "boolean" || typeof ff === "string"
           ? ff
-          : serializeConditionLike(ff);
+          : ff.toString();
       }
       if (config.strategy.maxParallel != null) {
         s["max-parallel"] = config.strategy.maxParallel;
