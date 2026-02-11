@@ -15,6 +15,7 @@ import {
   type StepLike,
   StepRef,
   toCondition,
+  unwrapSteps,
 } from "./step.ts";
 
 interface CommonJobFields {
@@ -110,7 +111,8 @@ interface DeferredAfterDep {
 
 /**
  * Recursively flattens a StepLike tree into a flat graph of Steps with
- * per-job dependencies and conditions.
+ * per-job dependencies and conditions. Returns the leaf-level Steps that
+ * were contributed, so parent StepGroups can apply their modifiers.
  *
  * afterDependencies (comesAfter) are NOT flattened into the graph — they are
  * collected in `deferredAfterDeps` and resolved later, so that comesAfter
@@ -122,10 +124,11 @@ function flattenStepLike(
   isLeaf: boolean,
   leafSteps: Step<string>[],
   deferredAfterDeps: DeferredAfterDep[],
-): void {
+): Step<string>[] {
   if (item instanceof Step) {
     ensureEntry(graph, item);
     if (isLeaf) leafSteps.push(item);
+    return [item];
   } else if (item instanceof StepRef) {
     const step = item.step as Step<string>;
     const entry = ensureEntry(graph, step);
@@ -142,10 +145,19 @@ function flattenStepLike(
     for (const dep of item.afterDependencies) {
       deferredAfterDeps.push({ step, target: dep });
     }
-  } else if (item instanceof StepGroup) {
+
+    return [step];
+  } else {
+    // StepGroup: recursively flatten children, then apply group modifiers
+    const contributed: Step<string>[] = [];
     for (const s of item.all) {
-      flattenStepLike(s, graph, isLeaf, leafSteps, deferredAfterDeps);
-      const step = s instanceof StepRef ? s.step as Step<string> : s;
+      contributed.push(
+        ...flattenStepLike(s, graph, isLeaf, leafSteps, deferredAfterDeps),
+      );
+    }
+
+    // apply group-level modifiers to all contributed steps
+    for (const step of contributed) {
       const entry = graph.get(step)!;
 
       if (item.condition != null) {
@@ -160,6 +172,8 @@ function flattenStepLike(
         deferredAfterDeps.push({ step, target: dep });
       }
     }
+
+    return contributed;
   }
 }
 
@@ -170,16 +184,9 @@ function flattenDep(
   graph: Map<Step<string>, GraphEntry>,
   deferredAfterDeps: DeferredAfterDep[],
 ): void {
-  if (dep instanceof StepGroup) {
-    for (const s of dep.all) {
-      const step = s instanceof StepRef ? s.step as Step<string> : s;
-      targetSet.add(step);
-    }
-    flattenStepLike(dep, graph, false, [], deferredAfterDeps);
-  } else {
-    const s = dep instanceof StepRef ? dep.step as Step<string> : dep;
+  const steps = flattenStepLike(dep, graph, false, [], deferredAfterDeps);
+  for (const s of steps) {
     targetSet.add(s);
-    flattenStepLike(dep, graph, false, [], deferredAfterDeps);
   }
 }
 
@@ -279,15 +286,7 @@ export class Job implements ExpressionSource {
     // already present in the graph (comesAfter does not pull in steps)
     for (const { step, target } of deferredAfterDeps) {
       const entry = graph.get(step)!;
-      if (target instanceof StepGroup) {
-        for (const s of target.all) {
-          const t = s instanceof StepRef ? s.step as Step<string> : s;
-          if (graph.has(t)) entry.afterDeps.add(t);
-        }
-      } else {
-        const t = target instanceof StepRef
-          ? target.step as Step<string>
-          : target;
+      for (const t of unwrapSteps(target)) {
         if (graph.has(t)) entry.afterDeps.add(t);
       }
     }

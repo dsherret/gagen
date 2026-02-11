@@ -241,12 +241,10 @@ export function unwrapStep(item: Step<string> | StepRef<string>): Step<string> {
   return item instanceof StepRef ? item.step : item;
 }
 
-/** Extracts all underlying Steps from a StepLike. */
+/** Extracts all underlying Steps from a StepLike (recursively for groups). */
 export function unwrapSteps(item: StepLike): Step<string>[] {
   if (item instanceof StepGroup) {
-    return item.all.map((s) =>
-      s instanceof StepRef ? s.step as Step<string> : s
-    );
+    return item.all.flatMap(unwrapSteps);
   }
   return [unwrapStep(item)];
 }
@@ -254,13 +252,13 @@ export function unwrapSteps(item: StepLike): Step<string>[] {
 // --- step group ---
 
 export class StepGroup {
-  readonly all: readonly (Step<string> | StepRef<string>)[];
+  readonly all: readonly StepLike[];
   readonly condition?: ConditionLike;
   readonly dependencies: readonly StepLike[];
   readonly afterDependencies: readonly StepLike[];
 
   constructor(
-    items: readonly (Step<string> | StepRef<string>)[],
+    items: readonly StepLike[],
     init?: {
       condition?: ConditionLike;
       dependencies?: readonly StepLike[];
@@ -307,13 +305,12 @@ export function steps(
   if (items.length === 0) {
     throw new Error("steps() requires at least one step");
   }
-  const created: (Step<string> | StepRef<string>)[] = [];
+  const created: StepLike[] = [];
   for (const item of items) {
-    if (item instanceof StepGroup) {
-      created.push(...item.all);
-    } else if (item instanceof StepRef) {
-      created.push(item);
-    } else if (item instanceof Step) {
+    if (
+      item instanceof Step || item instanceof StepRef ||
+      item instanceof StepGroup
+    ) {
       created.push(item);
     } else {
       created.push(new Step(item));
