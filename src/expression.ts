@@ -240,8 +240,14 @@ class LogicalCondition extends Condition {
   }
 
   #needsParens(child: Condition): boolean {
-    return (child instanceof LogicalCondition && child.op !== this.op) ||
-      child instanceof RawCondition;
+    if (child instanceof LogicalCondition && child.op !== this.op) return true;
+    if (child instanceof RawCondition) {
+      // only parenthesize raw expressions that contain logical operators
+      // which could cause precedence ambiguity
+      const expr = child.toExpression();
+      return expr.includes("&&") || expr.includes("||");
+    }
+    return false;
   }
 }
 
@@ -407,8 +413,13 @@ function collectTernarySources(
 
 // whether a condition needs parentheses when used as `cond && value`
 function needsParensForTernary(condition: Condition): boolean {
-  return (condition instanceof LogicalCondition && condition.op === "||") ||
-    condition instanceof RawCondition;
+  if (condition instanceof LogicalCondition && condition.op === "||") {
+    return true;
+  }
+  if (condition instanceof RawCondition) {
+    return condition.toExpression().includes("||");
+  }
+  return false;
 }
 
 function formatTernaryValue(value: TernaryValue): string {

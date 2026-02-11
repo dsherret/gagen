@@ -4,6 +4,7 @@ import {
   type ExpressionSource,
   ExpressionValue,
   FunctionCallCondition,
+  RawCondition,
 } from "./expression.ts";
 
 // --- helpers for constructing conditions directly ---
@@ -328,4 +329,30 @@ Deno.test("Condition duplicate sources are deduplicated", () => {
   const s1 = { id: "s1" };
   const c = cmp("a", "1", [s1]).and(cmp("b", "2", [s1]));
   assertEquals(c.sources.size, 1);
+});
+
+// --- RawCondition parenthesization ---
+
+function raw(expr: string) {
+  return new RawCondition(expr, new Set());
+}
+
+Deno.test("raw condition without operators is not parenthesized in and", () => {
+  const c = cmp("a", "1").and(raw("matrix.skip"));
+  assertEquals(c.toExpression(), "a == '1' && matrix.skip");
+});
+
+Deno.test("raw condition without operators is not parenthesized in or", () => {
+  const c = cmp("a", "1").or(raw("!(matrix.skip)"));
+  assertEquals(c.toExpression(), "a == '1' || !(matrix.skip)");
+});
+
+Deno.test("raw condition with || is parenthesized in and", () => {
+  const c = cmp("a", "1").and(raw("b || c"));
+  assertEquals(c.toExpression(), "a == '1' && (b || c)");
+});
+
+Deno.test("raw condition with && is parenthesized in or", () => {
+  const c = cmp("a", "1").or(raw("b && c"));
+  assertEquals(c.toExpression(), "a == '1' || (b && c)");
 });
