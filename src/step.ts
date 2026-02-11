@@ -94,6 +94,16 @@ export class Step<O extends string = never> implements ExpressionSource {
     return this;
   }
 
+  if(condition: ConditionLike): this {
+    const cond = toCondition(condition);
+    if (this.config.if != null) {
+      this.config.if = cond.and(toCondition(this.config.if));
+    } else {
+      this.config.if = cond;
+    }
+    return this;
+  }
+
   toYaml(effectiveIf?: Condition): Record<string, unknown> {
     const result: Record<string, unknown> = {};
 
@@ -195,13 +205,8 @@ export class StepGroup {
   }
 
   if(condition: ConditionLike): this {
-    const cond = toCondition(condition);
     for (const s of this.all) {
-      if (s.config.if != null) {
-        s.config.if = cond.and(toCondition(s.config.if));
-      } else {
-        s.config.if = cond;
-      }
+      s.if(condition);
     }
     return this;
   }
