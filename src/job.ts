@@ -58,6 +58,9 @@ export interface ReusableJobConfig extends CommonJobFields {
 
 export type JobConfig = StepsJobConfig | ReusableJobConfig;
 
+// tracks which Job owns each resolved step (for cross-job needs inference)
+const stepOwner = new WeakMap<Step<string>, Job>();
+
 export interface StepsJobDef extends StepsJobConfig {
   id?: string;
   steps: StepLike[] | StepGroup;
@@ -161,9 +164,9 @@ export class Job implements ExpressionSource {
     }
 
     const sorted = topoSort(allSteps, priority);
-    // set job reference on each resolved step for cross-job needs inference
+    // record job ownership for cross-job needs inference
     for (const s of sorted) {
-      s._job = this;
+      stepOwner.set(s, this);
     }
     return sorted;
   }
@@ -990,8 +993,9 @@ function collectJobSourcesFromStep(
   if (s.config.env) collectJobSources(s.config.env, out);
   // check cross-job step dependencies (e.g., artifact download → upload)
   for (const dep of s._crossJobDeps) {
-    if (dep._job instanceof Job) {
-      out.add(dep._job);
+    const owner = stepOwner.get(dep);
+    if (owner) {
+      out.add(owner);
     }
   }
   // walk dependencies recursively
