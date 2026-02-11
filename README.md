@@ -14,11 +14,7 @@ to repeat condition text over and over again.
 
 ```ts
 #!/usr/bin/env -S deno run --allow-read=ci.yml --allow-write=ci.yml
-import {
-  conditions,
-  createWorkflow,
-  step,
-} from "jsr:@david/gagen@<version>";
+import { conditions, createWorkflow, step } from "jsr:@david/gagen@<version>";
 
 const checkout = step({
   uses: "actions/checkout@v6",
