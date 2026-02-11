@@ -11,7 +11,6 @@ import {
   serializeConditionLike,
   serializeConfigValues,
   Step,
-  StepGroup,
   type StepLike,
   StepRef,
   toCondition,
@@ -62,7 +61,7 @@ export type JobConfig = StepsJobConfig | ReusableJobConfig;
 
 export interface StepsJobDef extends StepsJobConfig {
   id?: string;
-  steps: StepLike[] | StepGroup;
+  steps: StepLike | StepLike[];
   outputs?: Record<string, ExpressionValue>;
 }
 
@@ -77,7 +76,9 @@ export type JobDef = StepsJobDef | ReusableJobDef;
 interface GraphEntry {
   deps: Set<Step<string>>;
   afterDeps: Set<Step<string>>;
-  condition?: ConditionLike;
+  /** individual context conditions from each encounter (OR'd together later) */
+  contexts: ConditionLike[];
+  hasUnconditionalContext?: boolean;
 }
 
 function ensureEntry(
@@ -86,22 +87,75 @@ function ensureEntry(
 ): GraphEntry {
   let entry = graph.get(step);
   if (!entry) {
-    entry = { deps: new Set(), afterDeps: new Set() };
+    entry = { deps: new Set(), afterDeps: new Set(), contexts: [] };
     graph.set(step, entry);
   }
   return entry;
 }
 
-/** Adds a condition to a graph entry, ANDing with any existing condition. */
-function addEntryCondition(
+/**
+ * Records a context condition for a graph entry. Contexts from multiple
+ * encounters are collected and combined later (via combineContexts) to
+ * properly factor out shared terms. An undefined context means
+ * unconditional and dominates any condition.
+ */
+function applyContextCondition(
   entry: GraphEntry,
-  condition: ConditionLike,
+  context?: ConditionLike,
 ): void {
-  if (entry.condition != null) {
-    entry.condition = toCondition(condition).and(toCondition(entry.condition));
-  } else {
-    entry.condition = condition;
+  if (entry.hasUnconditionalContext) return;
+  if (context == null) {
+    entry.contexts = [];
+    entry.hasUnconditionalContext = true;
+    return;
   }
+  entry.contexts.push(context);
+}
+
+/**
+ * Combines the collected context conditions for a graph entry into a single
+ * condition. Factors out common AND-terms so that shared conditions (like
+ * `!(matrix.skip)`) appear once rather than being duplicated in each OR branch.
+ */
+function combineContexts(entry: GraphEntry): Condition | undefined {
+  if (entry.hasUnconditionalContext || entry.contexts.length === 0) {
+    return undefined;
+  }
+  if (entry.contexts.length === 1) {
+    return toCondition(entry.contexts[0]);
+  }
+  const conditions = entry.contexts.map((c) => toCondition(c));
+  return simplifyOrConditions(conditions) ?? undefined;
+}
+
+/** ANDs two optional conditions together (for nesting StepRef conditions). */
+function combineAndConditions(
+  a?: ConditionLike,
+  b?: ConditionLike,
+): ConditionLike | undefined {
+  if (a != null && b != null) return toCondition(a).and(toCondition(b));
+  return a ?? b;
+}
+
+/**
+ * Returns a step's config.if as a ConditionLike suitable for passing down
+ * to dependencies, or undefined if it references step outputs (which would
+ * create circular condition dependencies).
+ */
+function propagatableConfigIf(step: Step<string>): ConditionLike | undefined {
+  const configIf = step.config.if;
+  if (configIf == null) return undefined;
+  if (configIf instanceof Condition) {
+    for (const source of configIf.sources) {
+      if (source instanceof Step) return undefined;
+    }
+  }
+  if (configIf instanceof ExpressionValue) {
+    for (const source of configIf.allSources) {
+      if (source instanceof Step) return undefined;
+    }
+  }
+  return configIf;
 }
 
 interface DeferredAfterDep {
@@ -112,7 +166,10 @@ interface DeferredAfterDep {
 /**
  * Recursively flattens a StepLike tree into a flat graph of Steps with
  * per-job dependencies and conditions. Returns the leaf-level Steps that
- * were contributed, so parent StepGroups can apply their modifiers.
+ * were contributed, so parent composite steps can apply their modifiers.
+ *
+ * Context conditions are accumulated top-down via AND (nesting) and applied
+ * at leaf steps via OR (multiple encounters from different paths).
  *
  * afterDependencies (comesAfter) are NOT flattened into the graph — they are
  * collected in `deferredAfterDeps` and resolved later, so that comesAfter
@@ -124,57 +181,118 @@ function flattenStepLike(
   isLeaf: boolean,
   leafSteps: Step<string>[],
   deferredAfterDeps: DeferredAfterDep[],
+  contextCondition?: ConditionLike,
 ): Step<string>[] {
-  if (item instanceof Step) {
-    ensureEntry(graph, item);
-    if (isLeaf) leafSteps.push(item);
-    return [item];
-  } else if (item instanceof StepRef) {
+  if (item instanceof StepRef) {
     const step = item.step as Step<string>;
+    // AND this StepRef's condition with the parent context
+    const newContext = combineAndConditions(contextCondition, item.condition);
+
+    if (step.children.length > 0) {
+      // StepRef wrapping composite step: recurse with combined context
+      const contributed: Step<string>[] = [];
+      for (const child of step.children) {
+        contributed.push(
+          ...flattenStepLike(
+            child,
+            graph,
+            isLeaf,
+            leafSteps,
+            deferredAfterDeps,
+            newContext,
+          ),
+        );
+      }
+      // compute aggregate dep context: newContext AND (OR of children's
+      // config.ifs). If any child is unconditional, or the OR is a tautology,
+      // just use newContext.
+      let compositeDepsCtx: ConditionLike | undefined = newContext;
+      if (item.dependencies.length > 0) {
+        const childIfs: ConditionLike[] = [];
+        let allConditional = true;
+        for (const s of contributed) {
+          const cif = propagatableConfigIf(s);
+          if (cif == null) {
+            allConditional = false;
+            break;
+          }
+          childIfs.push(cif);
+        }
+        if (allConditional && childIfs.length > 0) {
+          const orCond = simplifyOrConditions(
+            childIfs.map((c) => toCondition(c)),
+          );
+          if (orCond != null) {
+            compositeDepsCtx = combineAndConditions(newContext, orCond);
+          }
+        }
+      }
+
+      // apply deps once with aggregate context, add to all children's dep sets
+      for (const dep of item.dependencies) {
+        const depSteps = flattenStepLike(
+          dep,
+          graph,
+          false,
+          [],
+          deferredAfterDeps,
+          compositeDepsCtx,
+        );
+        for (const s of contributed) {
+          const entry = graph.get(s)!;
+          for (const ds of depSteps) entry.deps.add(ds);
+        }
+      }
+      for (const s of contributed) {
+        for (const dep of item.afterDependencies) {
+          deferredAfterDeps.push({ step: s, target: dep });
+        }
+      }
+      return contributed;
+    }
+
+    // StepRef wrapping leaf step
     const entry = ensureEntry(graph, step);
     if (isLeaf) leafSteps.push(step);
-
-    if (item.condition != null) {
-      addEntryCondition(entry, item.condition);
-    }
-
+    applyContextCondition(entry, newContext);
+    // include step's config.if in the dep context
+    const depContext = combineAndConditions(
+      newContext,
+      propagatableConfigIf(step),
+    );
     for (const dep of item.dependencies) {
-      flattenDep(dep, entry.deps, graph, deferredAfterDeps);
+      flattenDep(dep, entry.deps, graph, deferredAfterDeps, depContext);
     }
-
     for (const dep of item.afterDependencies) {
       deferredAfterDeps.push({ step, target: dep });
     }
-
     return [step];
-  } else {
-    // StepGroup: recursively flatten children, then apply group modifiers
+  }
+
+  // Step (leaf or composite)
+  if (item.children.length > 0) {
+    // composite step: recurse into children with same context
     const contributed: Step<string>[] = [];
-    for (const s of item.all) {
+    for (const child of item.children) {
       contributed.push(
-        ...flattenStepLike(s, graph, isLeaf, leafSteps, deferredAfterDeps),
+        ...flattenStepLike(
+          child,
+          graph,
+          isLeaf,
+          leafSteps,
+          deferredAfterDeps,
+          contextCondition,
+        ),
       );
     }
-
-    // apply group-level modifiers to all contributed steps
-    for (const step of contributed) {
-      const entry = graph.get(step)!;
-
-      if (item.condition != null) {
-        addEntryCondition(entry, item.condition);
-      }
-
-      for (const dep of item.dependencies) {
-        flattenDep(dep, entry.deps, graph, deferredAfterDeps);
-      }
-
-      for (const dep of item.afterDependencies) {
-        deferredAfterDeps.push({ step, target: dep });
-      }
-    }
-
     return contributed;
   }
+
+  // leaf step
+  const entry = ensureEntry(graph, item);
+  if (isLeaf) leafSteps.push(item);
+  applyContextCondition(entry, contextCondition);
+  return [item];
 }
 
 /** Flattens a dependency target into the graph and adds it to a dep set. */
@@ -183,8 +301,16 @@ function flattenDep(
   targetSet: Set<Step<string>>,
   graph: Map<Step<string>, GraphEntry>,
   deferredAfterDeps: DeferredAfterDep[],
+  contextCondition?: ConditionLike,
 ): void {
-  const steps = flattenStepLike(dep, graph, false, [], deferredAfterDeps);
+  const steps = flattenStepLike(
+    dep,
+    graph,
+    false,
+    [],
+    deferredAfterDeps,
+    contextCondition,
+  );
   for (const s of steps) {
     targetSet.add(s);
   }
@@ -202,7 +328,7 @@ function addConditionSourceDeps(
   while (changed) {
     changed = false;
     for (const [step, entry] of [...graph]) {
-      for (const cond of [step.config.if, entry.condition]) {
+      for (const cond of [step.config.if, ...entry.contexts]) {
         if (!(cond instanceof Condition)) continue;
         for (const source of cond.sources) {
           if (!(source instanceof Step)) continue;
@@ -508,11 +634,10 @@ export class Job implements ExpressionSource {
     }
 
     // steps
-    const { graph, leafSteps } = this.#buildGraph();
+    const { graph } = this.#buildGraph();
     const resolvedSteps = this.resolveSteps();
     const effectiveConditions = computeEffectiveConditions(
       resolvedSteps,
-      leafSteps,
       graph,
     );
     result.steps = resolvedSteps.map((s) => {
@@ -523,131 +648,33 @@ export class Job implements ExpressionSource {
   }
 }
 
-// --- condition propagation ---
+// --- effective conditions ---
 
+/**
+ * Computes effective conditions for all steps. Each step's effective condition
+ * is the combination of its collected context conditions (OR'd together,
+ * simplified) AND'd with its intrinsic config.if.
+ *
+ * Context conditions are collected during the tree walk — they flow DOWN
+ * from parent groups and StepRef conditions through dependencies, so shared
+ * top-level conditions like `!(matrix.skip)` naturally stay factored out.
+ */
 function computeEffectiveConditions(
-  sortedSteps: Step<string>[],
-  leafSteps: Step<string>[],
+  steps: Step<string>[],
   graph: Map<Step<string>, GraphEntry>,
 ): Map<Step<string>, Condition | undefined> {
-  const posMap = new Map<Step<string>, number>();
-  for (let i = 0; i < sortedSteps.length; i++) {
-    posMap.set(sortedSteps[i], i);
-  }
-
-  // build dependents map: for each step, which steps depend on it
-  const dependents = new Map<Step<string>, Set<Step<string>>>();
-  const addDependent = (dep: Step<string>, s: Step<string>) => {
-    let set = dependents.get(dep);
-    if (!set) {
-      set = new Set();
-      dependents.set(dep, set);
-    }
-    set.add(s);
-  };
-  for (const s of sortedSteps) {
-    const entry = graph.get(s)!;
-    for (const dep of entry.deps) {
-      if (posMap.has(dep)) {
-        addDependent(dep, s);
-      }
-    }
-  }
-
-  // steps explicitly passed as leaves should not receive propagated
-  // conditions — the user declared them directly, so they keep their own if
-  const leafSet = new Set<Step<string>>(leafSteps);
-
-  // compute effective conditions in reverse topo order
   const effective = new Map<Step<string>, Condition | undefined>();
-
-  for (let i = sortedSteps.length - 1; i >= 0; i--) {
-    const s = sortedSteps[i];
+  for (const s of steps) {
     const entry = graph.get(s)!;
-    const ownIf = getOwnCondition(s.config.if, entry.condition);
-
-    if (leafSet.has(s)) {
-      // explicitly added by user — no propagation
-      effective.set(s, ownIf);
-      continue;
-    }
-
-    const deps = dependents.get(s);
-    if (!deps || deps.size === 0) {
-      effective.set(s, ownIf);
-      continue;
-    }
-
-    // collect propagatable conditions from dependents
-    const depConditions: Condition[] = [];
-    let mustAlwaysRun = false;
-
-    for (const d of deps) {
-      const dEffective = effective.get(d);
-
-      if (dEffective == null) {
-        // dependent has no effective condition — step must always run
-        mustAlwaysRun = true;
-        break;
-      }
-
-      // check if the condition can propagate to this position
-      if (!canPropagateTo(dEffective, i, posMap)) {
-        // condition references steps at or after this position
-        mustAlwaysRun = true;
-        break;
-      }
-
-      depConditions.push(dEffective);
-    }
-
-    const propagated = mustAlwaysRun
-      ? undefined
-      : simplifyOrConditions(depConditions);
-
-    if (mustAlwaysRun) {
-      effective.set(s, ownIf);
-    } else if (propagated != null && ownIf != null) {
-      effective.set(s, deduplicateAndTerms(propagated.and(ownIf)));
+    const ctx = combineContexts(entry);
+    const configIf = s.config.if != null ? toCondition(s.config.if) : undefined;
+    if (ctx != null && configIf != null) {
+      effective.set(s, deduplicateAndTerms(ctx.and(configIf)));
     } else {
-      effective.set(s, propagated ?? ownIf);
+      effective.set(s, ctx ?? configIf);
     }
   }
-
   return effective;
-}
-
-/** Combines config.if (intrinsic) with context condition (per-job). */
-function getOwnCondition(
-  configIf?: ConditionLike,
-  contextCondition?: ConditionLike,
-): Condition | undefined {
-  const configCond = configIf != null ? toCondition(configIf) : undefined;
-  const ctxCond = contextCondition != null
-    ? toCondition(contextCondition)
-    : undefined;
-  if (configCond != null && ctxCond != null) {
-    return ctxCond.and(configCond);
-  }
-  return ctxCond ?? configCond;
-}
-
-// a condition can propagate backward to a step at targetPos only if none of
-// the condition's Step sources are at or after that position
-function canPropagateTo(
-  condition: Condition,
-  targetPos: number,
-  posMap: Map<Step<string>, number>,
-): boolean {
-  for (const source of condition.sources) {
-    if (source instanceof Step) {
-      const pos = posMap.get(source as Step<string>);
-      if (pos !== undefined && pos >= targetPos) {
-        return false;
-      }
-    }
-  }
-  return true;
 }
 
 // --- condition simplification ---
@@ -1116,7 +1143,9 @@ function collectJobSourcesFromGraph(
 ): void {
   for (const [step, entry] of graph) {
     collectJobSources(step.config.if, out);
-    collectJobSources(entry.condition, out);
+    for (const ctx of entry.contexts) {
+      collectJobSources(ctx, out);
+    }
     if (step.config.with) collectJobSources(step.config.with, out);
     if (step.config.env) collectJobSources(step.config.env, out);
     if (stepOwners) {
@@ -1198,7 +1227,7 @@ export function job(id: string, config: JobDef): Job {
   }
   const { id: _id, steps, outputs, ...jobConfig } = config;
   return new Job(id, jobConfig, {
-    steps: steps instanceof StepGroup ? [steps] : steps,
+    steps: Array.isArray(steps) ? steps : [steps],
     outputs,
   });
 }

@@ -74,6 +74,10 @@ export class ExpressionValue {
     );
   }
 
+  not(): Condition {
+    return new RawCondition(`!(${this.#expression})`, sourcesFrom(this));
+  }
+
   /** wrap in `${{ }}` for use in YAML */
   toString(): string {
     return `\${{ ${this.#expression} }}`;

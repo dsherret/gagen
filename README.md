@@ -18,7 +18,6 @@ import {
   conditions,
   createWorkflow,
   step,
-  steps,
 } from "jsr:@david/gagen@<version>";
 
 const checkout = step({
@@ -34,7 +33,7 @@ const installDeno = step({
   uses: "denoland/setup-deno@v2",
 });
 
-const lint = steps(
+const lint = step(
   {
     name: "Clippy",
     run: "cargo clippy",

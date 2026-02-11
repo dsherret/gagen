@@ -10,7 +10,6 @@ import {
   expr,
   job,
   step,
-  steps,
 } from "./mod.ts";
 import { resolveJobId, toKebabCase } from "./job.ts";
 import { resetStepCounter } from "./step.ts";
@@ -1690,9 +1689,9 @@ Deno.test("toYamlString with no header by default", () => {
   assertEquals(yaml.startsWith("name: test\n"), true);
 });
 
-// --- steps().if() as global condition ---
+// --- step().if() as global condition ---
 
-Deno.test("steps().if() applies condition to all steps", () => {
+Deno.test("step().if() applies condition to all steps", () => {
   setup();
   const checkout = step({ uses: "actions/checkout@v6" });
   const build = step({ name: "Build", run: "make" }).dependsOn(checkout);
@@ -1703,7 +1702,7 @@ Deno.test("steps().if() applies condition to all steps", () => {
     jobs: [{
       id: "j",
       runsOn: "ubuntu-latest",
-      steps: [steps(build).if(isBranch("main"))],
+      steps: [build.if(isBranch("main"))],
     }],
   });
 
@@ -1724,7 +1723,7 @@ jobs:
   );
 });
 
-Deno.test("steps().if() ANDs with step condition", () => {
+Deno.test("step().if() ANDs with step condition", () => {
   setup();
   const os = expr("matrix.os");
   const s = step({
@@ -1739,7 +1738,7 @@ Deno.test("steps().if() ANDs with step condition", () => {
     jobs: [{
       id: "j",
       runsOn: "ubuntu-latest",
-      steps: [steps(s).if(isBranch("main"))],
+      steps: [s.if(isBranch("main"))],
     }],
   });
 
@@ -1758,12 +1757,12 @@ jobs:
   );
 });
 
-// --- steps() / StepGroup ---
+// --- step() composite / grouping ---
 
-Deno.test("steps() groups steps and dependsOn applies to all", () => {
+Deno.test("step() groups steps and dependsOn applies to all", () => {
   setup();
   const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
-  const group = steps(
+  const group = step(
     { uses: "dsherret/rust-toolchain-file@v1" },
     { uses: "Swatinem/rust-cache@v2" },
   ).dependsOn(checkout);
@@ -1796,12 +1795,12 @@ jobs:
   );
 });
 
-Deno.test("steps() with existing Step instances", () => {
+Deno.test("step() composite with existing Step instances", () => {
   setup();
   const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
   const toolchain = step({ uses: "dsherret/rust-toolchain-file@v1" });
   const cache = step({ uses: "Swatinem/rust-cache@v2" });
-  const group = steps(toolchain, cache).dependsOn(checkout);
+  const group = step(toolchain, cache).dependsOn(checkout);
 
   const build = step({ name: "Build", run: "cargo build" }).dependsOn(group);
 
@@ -1831,10 +1830,10 @@ jobs:
   );
 });
 
-Deno.test("steps() group passed directly to steps", () => {
+Deno.test("step() composite passed directly to steps", () => {
   setup();
   const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
-  const group = steps(
+  const group = step(
     {
       name: "Setup musl",
       if: expr("matrix.target").equals("x86_64-musl"),
@@ -1876,14 +1875,14 @@ jobs:
   );
 });
 
-Deno.test("steps() single step behaves like step()", () => {
+Deno.test("step() single config behaves as leaf step", () => {
   setup();
-  const group = steps({ name: "Only", run: "echo hi" });
+  const s = step({ name: "Only", run: "echo hi" });
   const wf = createWorkflow({
     name: "test",
     on: {},
     jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [group] },
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
     ],
   });
 
@@ -1898,14 +1897,6 @@ jobs:
       - name: Only
         run: echo hi
 `,
-  );
-});
-
-Deno.test("steps() with no args throws", () => {
-  assertThrows(
-    () => steps(),
-    Error,
-    "at least one step",
   );
 });
 
@@ -1980,12 +1971,12 @@ jobs:
   );
 });
 
-// --- StepGroup.if() ---
+// --- composite step .if() ---
 
-Deno.test("StepGroup.if() applies condition to all steps", () => {
+Deno.test("composite step .if() applies condition to all steps", () => {
   setup();
   const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
-  const group = steps(
+  const group = step(
     { name: "Build (Release)", run: "cargo build --release" },
     { name: "Build cross (Release)", run: "cross build --release" },
   ).if(conditions.isTag()).dependsOn(checkout);
@@ -2019,10 +2010,10 @@ jobs:
   );
 });
 
-Deno.test("StepGroup.if() ANDs with existing step conditions", () => {
+Deno.test("composite step .if() ANDs with existing step conditions", () => {
   setup();
   const isCross = expr("matrix.cross").equals("true");
-  const group = steps(
+  const group = step(
     step({ name: "Build", if: isCross.not(), run: "cargo build" }),
     step({ name: "Build cross", if: isCross, run: "cross build" }),
   ).if(conditions.isTag());
@@ -3281,7 +3272,7 @@ jobs:
   );
 });
 
-Deno.test("job() with steps().if() condition", () => {
+Deno.test("job() with step().if() condition", () => {
   setup();
   const s = step({ name: "Test", run: "echo hi" });
 
@@ -3291,7 +3282,7 @@ Deno.test("job() with steps().if() condition", () => {
     jobs: [{
       id: "build",
       runsOn: "ubuntu-latest",
-      steps: [steps(s).if(conditions.isBranch("main"))],
+      steps: [s.if(conditions.isBranch("main"))],
     }],
   });
 
@@ -3636,10 +3627,10 @@ jobs:
   );
 });
 
-Deno.test("comesAfter on StepGroup applies to all steps in group", () => {
+Deno.test("comesAfter on composite step applies to all children", () => {
   setup();
   const setup_ = step({ name: "Setup", run: "setup" });
-  const group = steps(
+  const group = step(
     { name: "Build A", run: "build-a" },
     { name: "Build B", run: "build-b" },
   ).comesAfter(setup_);
@@ -3711,4 +3702,62 @@ jobs:
         run: shared
 `,
   );
+});
+
+Deno.test("shared step in multiple conditional composites gets OR condition", () => {
+  setup();
+  const isTest = expr("matrix.job").equals("test");
+  const isBench = expr("matrix.job").equals("bench");
+
+  const cache = step({ name: "Cache", uses: "cache@v4" });
+  const build = step({ name: "Build", run: "cargo build" }).dependsOn(cache);
+
+  const testGroup = step(
+    build,
+    { name: "Run tests", run: "cargo test" },
+  ).if(isTest);
+
+  const benchGroup = step(
+    build,
+    { name: "Run bench", run: "cargo bench" },
+  ).if(isBench);
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [testGroup, benchGroup] },
+    ],
+  });
+
+  const yaml = wf.toYamlString();
+  // build appears in both testGroup and benchGroup, so it should get the OR
+  // of both conditions. cache is a dep of build, so it should also get OR.
+  const parsed = parse(yaml) as Record<string, unknown>;
+  const steps = (parsed as { jobs: { j: { steps: unknown[] } } }).jobs.j.steps;
+  const cacheStep = (steps as Record<string, unknown>[]).find((s) =>
+    s.name === "Cache"
+  );
+  const buildStep = (steps as Record<string, unknown>[]).find((s) =>
+    s.name === "Build"
+  );
+  const testStep = (steps as Record<string, unknown>[]).find((s) =>
+    s.name === "Run tests"
+  );
+  const benchStep = (steps as Record<string, unknown>[]).find((s) =>
+    s.name === "Run bench"
+  );
+
+  // build and cache should have OR condition
+  assertEquals(
+    buildStep?.if,
+    "matrix.job == 'test' || matrix.job == 'bench'",
+  );
+  assertEquals(
+    cacheStep?.if,
+    "matrix.job == 'test' || matrix.job == 'bench'",
+  );
+  // leaf steps keep their individual conditions
+  assertEquals(testStep?.if, "matrix.job == 'test'");
+  assertEquals(benchStep?.if, "matrix.job == 'bench'");
 });

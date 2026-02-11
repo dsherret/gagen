@@ -31,7 +31,7 @@ export function resetStepCounter(): void {
   stepCounter = 0;
 }
 
-export type StepLike = Step<string> | StepRef<string> | StepGroup;
+export type StepLike = Step<string> | StepRef<string>;
 
 export class Step<O extends string = never> implements ExpressionSource {
   readonly #id: string;
@@ -39,8 +39,28 @@ export class Step<O extends string = never> implements ExpressionSource {
   readonly outputs: { [K in O]: ExpressionValue };
   // cross-job step references for needs inference (e.g., artifact download → upload)
   readonly _crossJobDeps: readonly Step<string>[];
+  readonly children: readonly StepLike[];
 
-  constructor(config: StepConfig<O>, crossJobDeps?: Step<string>[]) {
+  constructor(config: StepConfig<O>, crossJobDeps?: Step<string>[]);
+  constructor(children: readonly StepLike[]);
+  constructor(
+    configOrChildren: StepConfig<O> | readonly StepLike[],
+    crossJobDeps?: Step<string>[],
+  ) {
+    if (Array.isArray(configOrChildren)) {
+      // composite step (group of children)
+      if (configOrChildren.length === 0) {
+        throw new Error("step() requires at least one step");
+      }
+      this.#id = `_step_${stepCounter++}`;
+      this.config = {} as StepConfig<O>;
+      this._crossJobDeps = Object.freeze([]);
+      this.outputs = {} as { [K in O]: ExpressionValue };
+      this.children = Object.freeze([...configOrChildren] as StepLike[]);
+      return;
+    }
+
+    const config = configOrChildren as StepConfig<O>;
     if (config.outputs?.length && !config.id) {
       throw new Error(
         "Step with outputs must have an explicit id",
@@ -63,6 +83,7 @@ export class Step<O extends string = never> implements ExpressionSource {
       }
     }
     this.outputs = outputs;
+    this.children = Object.freeze([] as StepLike[]);
   }
 
   get id(): string {
@@ -138,8 +159,27 @@ export class Step<O extends string = never> implements ExpressionSource {
 
 export function step<const O extends string = never>(
   config: StepConfig<O>,
-): Step<O> {
-  return new Step(config);
+): Step<O>;
+export function step(
+  first: Step<string> | StepRef<string> | StepConfig,
+  second: Step<string> | StepRef<string> | StepConfig,
+  ...rest: (Step<string> | StepRef<string> | StepConfig)[]
+): Step<never>;
+export function step(
+  ...args: unknown[]
+): Step<string> {
+  if (args.length === 1) {
+    return new Step(args[0] as StepConfig);
+  }
+  const children: StepLike[] = [];
+  for (const item of args) {
+    if (item instanceof Step || item instanceof StepRef) {
+      children.push(item);
+    } else {
+      children.push(new Step(item as StepConfig));
+    }
+  }
+  return new Step(children);
 }
 
 // --- StepRef: immutable wrapper for per-usage deps/conditions ---
@@ -241,80 +281,12 @@ export function unwrapStep(item: Step<string> | StepRef<string>): Step<string> {
   return item instanceof StepRef ? item.step : item;
 }
 
-/** Extracts all underlying Steps from a StepLike (recursively for groups). */
+/** Extracts all underlying leaf Steps from a StepLike (recursively for composites). */
 export function unwrapSteps(item: StepLike): Step<string>[] {
-  if (item instanceof StepGroup) {
-    return item.all.flatMap(unwrapSteps);
+  const s = unwrapStep(item);
+  if (s.children.length > 0) {
+    return s.children.flatMap(unwrapSteps);
   }
-  return [unwrapStep(item)];
+  return [s];
 }
 
-// --- step group ---
-
-export class StepGroup {
-  readonly all: readonly StepLike[];
-  readonly condition?: ConditionLike;
-  readonly dependencies: readonly StepLike[];
-  readonly afterDependencies: readonly StepLike[];
-
-  constructor(
-    items: readonly StepLike[],
-    init?: {
-      condition?: ConditionLike;
-      dependencies?: readonly StepLike[];
-      afterDependencies?: readonly StepLike[];
-    },
-  ) {
-    this.all = items;
-    this.condition = init?.condition;
-    this.dependencies = init?.dependencies ?? [];
-    this.afterDependencies = init?.afterDependencies ?? [];
-  }
-
-  if(condition: ConditionLike): StepGroup {
-    const newCond = this.condition != null
-      ? toCondition(condition).and(toCondition(this.condition))
-      : condition;
-    return new StepGroup(this.all, {
-      condition: newCond,
-      dependencies: this.dependencies,
-      afterDependencies: this.afterDependencies,
-    });
-  }
-
-  dependsOn(...deps: StepLike[]): StepGroup {
-    return new StepGroup(this.all, {
-      condition: this.condition,
-      dependencies: [...this.dependencies, ...deps],
-      afterDependencies: this.afterDependencies,
-    });
-  }
-
-  comesAfter(...deps: StepLike[]): StepGroup {
-    return new StepGroup(this.all, {
-      condition: this.condition,
-      dependencies: this.dependencies,
-      afterDependencies: [...this.afterDependencies, ...deps],
-    });
-  }
-}
-
-export function steps(
-  ...items: (Step<string> | StepRef<string> | StepGroup | StepConfig)[]
-): StepGroup {
-  if (items.length === 0) {
-    throw new Error("steps() requires at least one step");
-  }
-  const created: StepLike[] = [];
-  for (const item of items) {
-    if (
-      item instanceof Step || item instanceof StepRef ||
-      item instanceof StepGroup
-    ) {
-      created.push(item);
-    } else {
-      created.push(new Step(item));
-    }
-  }
-  return new StepGroup(created);
-}
