@@ -252,7 +252,7 @@ Deno.test("or on right side of and gets parenthesized", () => {
 // --- Condition: not ---
 
 Deno.test("not negates a comparison", () => {
-  assertEquals(cmp("a", "1").not().toExpression(), "!(a == '1')");
+  assertEquals(cmp("a", "1").not().toExpression(), "a != '1'");
 });
 
 Deno.test("not negates a function call", () => {
@@ -274,7 +274,7 @@ Deno.test("not parenthesizes or conditions", () => {
 
 Deno.test("double not", () => {
   const c = cmp("a", "1").not().not();
-  assertEquals(c.toExpression(), "!!(a == '1')");
+  assertEquals(c.toExpression(), "a == '1'");
 });
 
 // --- Condition: source tracking ---

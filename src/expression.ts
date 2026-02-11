@@ -167,6 +167,15 @@ export class ComparisonCondition extends Condition {
     this.#right = right;
   }
 
+  override not(): Condition {
+    return new ComparisonCondition(
+      this.#left,
+      this.#op === "==" ? "!=" : "==",
+      this.#right,
+      this.sources,
+    );
+  }
+
   toExpression(): string {
     return `${this.#left} ${this.#op} ${formatLiteral(this.#right)}`;
   }
