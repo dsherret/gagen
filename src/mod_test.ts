@@ -480,28 +480,33 @@ jobs:
   );
 });
 
-// --- cycle detection ---
+// --- immutability ---
 
-Deno.test("cycle detection throws with cycle path", () => {
+Deno.test("dependsOn returns new step without modifying original", () => {
   setup();
   const a = step({ name: "A" });
-  const b = step({ name: "B" }).dependsOn(a);
-  // create cycle: a depends on b, b depends on a
-  a.dependsOn(b);
+  const b = step({ name: "B" });
+  const a2 = a.dependsOn(b);
 
-  const wf = createWorkflow({
-    name: "test",
-    on: {},
-    jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [a] },
-    ],
-  });
+  // original is unmodified
+  assertEquals(a.dependencies.length, 0);
+  // new step has the dependency
+  assertEquals(a2.dependencies.length, 1);
+  assertEquals(a2.dependencies[0], b);
+  // same id
+  assertEquals(a2.id, a.id);
+});
 
-  assertThrows(
-    () => wf.toYamlString(),
-    Error,
-    "Cycle detected in step ordering: A → B → A",
-  );
+Deno.test("comesAfter returns new step without modifying original", () => {
+  setup();
+  const a = step({ name: "A" });
+  const b = step({ name: "B" });
+  const a2 = a.comesAfter(b);
+
+  assertEquals(a.comesAfterDeps.length, 0);
+  assertEquals(a2.comesAfterDeps.length, 1);
+  assertEquals(a2.comesAfterDeps[0], b);
+  assertEquals(a2.id, a.id);
 });
 
 // --- step with outputs requires id ---
@@ -3421,14 +3426,12 @@ Deno.test("comesAfter puts step after another", () => {
     uses: "denoland/setup-deno@v2",
     with: { "deno-version": "canary" },
   });
-  const checkout = step({ uses: "actions/checkout@v6" });
+  const checkout = step({ uses: "actions/checkout@v6" }).comesAfter(setupDeno);
   const build = step({ name: "Build", run: "cargo build" }).dependsOn(checkout);
   const lint = step({ name: "Lint", run: "deno lint" }).dependsOn(
     setupDeno,
     checkout,
   );
-
-  checkout.comesAfter(setupDeno);
 
   const wf = createWorkflow({
     name: "test",
@@ -3460,12 +3463,10 @@ jobs:
 
 Deno.test("comesAfter between two independent steps", () => {
   setup();
-  const a = step({ name: "A", run: "a" });
   const b = step({ name: "B", run: "b" });
   const c = step({ name: "C", run: "c" });
-
   // force A after C, despite passing order [a, b, c]
-  a.comesAfter(c);
+  const a = step({ name: "A", run: "a" }).comesAfter(c);
 
   const wf = createWorkflow({
     name: "test",
@@ -3497,10 +3498,8 @@ jobs:
 Deno.test("comesAfter does not pull in steps", () => {
   setup();
   const a = step({ name: "A", run: "a" });
-  const b = step({ name: "B", run: "b" });
-
   // b.comesAfter(a) but only b is in the job — a should NOT be pulled in
-  b.comesAfter(a);
+  const b = step({ name: "B", run: "b" }).comesAfter(a);
 
   const wf = createWorkflow({
     name: "test",
@@ -3524,63 +3523,45 @@ jobs:
   );
 });
 
-Deno.test("comesAfter conflict with dependsOn throws cycle error", () => {
+Deno.test("comesAfter with dependsOn in same direction", () => {
   setup();
-  const a = step({ name: "A" });
-  const b = step({ name: "B" }).dependsOn(a);
-
-  // b depends on a (b after a), but a.comesAfter(b) means a must come after b
-  a.comesAfter(b);
+  const a = step({ name: "A", run: "a" });
+  // both dependsOn and comesAfter point in the same direction (b after a)
+  const b = step({ name: "B", run: "b" }).dependsOn(a).comesAfter(a);
 
   const wf = createWorkflow({
     name: "test",
     on: {},
     jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [a, b] },
+      { id: "j", runsOn: "ubuntu-latest", steps: [b] },
     ],
   });
 
-  assertThrows(
-    () => wf.toYamlString(),
-    Error,
-    "Cycle detected in step ordering: A → B → A",
-  );
-});
-
-Deno.test("comesAfter mutual constraint throws cycle error", () => {
-  setup();
-  const a = step({ name: "A" });
-  const b = step({ name: "B" });
-
-  a.comesAfter(b);
-  b.comesAfter(a);
-
-  const wf = createWorkflow({
-    name: "test",
-    on: {},
-    jobs: [
-      { id: "j", runsOn: "ubuntu-latest", steps: [a, b] },
-    ],
-  });
-
-  assertThrows(
-    () => wf.toYamlString(),
-    Error,
-    "Cycle detected in step ordering: A → B → A",
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: A
+        run: a
+      - name: B
+        run: b
+`,
   );
 });
 
 Deno.test("comesAfter does not affect condition propagation", () => {
   setup();
   const a = step({ name: "A", run: "a" });
+  // b comes after a, but a should NOT inherit b's condition
   const b = step({
     name: "B",
     run: "b",
     if: expr("matrix.os").equals("linux"),
-  });
-
-  // b comes after a, but a should NOT inherit b's condition
-  b.comesAfter(a);
+  }).comesAfter(a);
 
   const wf = createWorkflow({
     name: "test",
@@ -3610,10 +3591,8 @@ jobs:
 Deno.test("comesAfter compatible with dependsOn (same direction)", () => {
   setup();
   const a = step({ name: "A" });
-  const b = step({ name: "B" }).dependsOn(a);
-
   // redundant but compatible: b already comes after a
-  b.comesAfter(a);
+  const b = step({ name: "B" }).dependsOn(a).comesAfter(a);
 
   const wf = createWorkflow({
     name: "test",
