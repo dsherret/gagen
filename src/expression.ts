@@ -302,6 +302,9 @@ export function expr(expression: string): ExpressionValue {
   return new ExpressionValue(expression);
 }
 
+const ref = expr("github.ref");
+const eventName = expr("github.event_name");
+
 /** Common condition helpers for GitHub Actions workflows. */
 export const conditions = {
   /** Status check functions for use in step/job `if` fields. */
@@ -330,17 +333,8 @@ export const conditions = {
    */
   isTag: (tag?: string): Condition =>
     tag != null
-      ? new ComparisonCondition(
-        "github.ref",
-        "==",
-        `refs/tags/${tag}`,
-        EMPTY_SOURCES,
-      )
-      : new FunctionCallCondition(
-        "startsWith",
-        ["github.ref", "'refs/tags/'"],
-        EMPTY_SOURCES,
-      ),
+      ? ref.equals(`refs/tags/${tag}`)
+      : ref.startsWith("refs/tags/"),
   /**
    * Check if the ref is a specific branch.
    *
@@ -348,13 +342,7 @@ export const conditions = {
    * conditions.isBranch("main")  // github.ref == 'refs/heads/main'
    * ```
    */
-  isBranch: (branch: string): Condition =>
-    new ComparisonCondition(
-      "github.ref",
-      "==",
-      `refs/heads/${branch}`,
-      EMPTY_SOURCES,
-    ),
+  isBranch: (branch: string): Condition => ref.equals(`refs/heads/${branch}`),
   /**
    * Check the event that triggered the workflow.
    *
@@ -362,13 +350,42 @@ export const conditions = {
    * conditions.isEvent("pull_request")  // github.event_name == 'pull_request'
    * ```
    */
-  isEvent: (event: string): Condition =>
-    new ComparisonCondition(
-      "github.event_name",
-      "==",
-      event,
-      EMPTY_SOURCES,
-    ),
+  isEvent: (event: string): Condition => eventName.equals(event),
+  /**
+   * Check if the event is a pull request.
+   *
+   * ```ts
+   * conditions.isPr()  // github.event_name == 'pull_request'
+   * ```
+   */
+  isPr: (): Condition => eventName.equals("pull_request"),
+  /**
+   * Check the repository (owner/name).
+   *
+   * ```ts
+   * conditions.isRepository("denoland/deno")  // github.repository == 'denoland/deno'
+   * ```
+   */
+  isRepository: (repo: string): Condition =>
+    expr("github.repository").equals(repo),
+  /**
+   * Check if the pull request is a draft.
+   *
+   * ```ts
+   * conditions.isDraftPr()  // github.event.pull_request.draft == true
+   * ```
+   */
+  isDraftPr: (): Condition =>
+    expr("github.event.pull_request.draft").equals(true),
+  /**
+   * Check if the pull request has a specific label.
+   *
+   * ```ts
+   * conditions.hasLabel("ci-full")  // contains(github.event.pull_request.labels.*.name, 'ci-full')
+   * ```
+   */
+  hasPrLabel: (label: string): Condition =>
+    expr("github.event.pull_request.labels.*.name").contains(label),
 } as const;
 
 // --- helpers ---
