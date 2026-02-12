@@ -388,6 +388,29 @@ export const conditions = {
    */
   hasPrLabel: (label: string): Condition =>
     expr("github.event.pull_request.labels.*.name").contains(label),
+  /**
+   * Check the runner operating system.
+   *
+   * ```ts
+   * conditions.isRunnerOs("Linux")    // runner.os == 'Linux'
+   * conditions.isRunnerOs("macOS")    // runner.os == 'macOS'
+   * conditions.isRunnerOs("Windows")  // runner.os == 'Windows'
+   * ```
+   */
+  isRunnerOs: (os: "Linux" | "macOS" | "Windows"): Condition =>
+    expr("runner.os").equals(os),
+  /**
+   * Check the runner architecture.
+   *
+   * ```ts
+   * conditions.isRunnerArch("X86")    // runner.arch == 'X86'
+   * conditions.isRunnerArch("X64")    // runner.arch == 'X64'
+   * conditions.isRunnerArch("ARM")    // runner.arch == 'ARM'
+   * conditions.isRunnerArch("ARM64")  // runner.arch == 'ARM64'
+   * ```
+   */
+  isRunnerArch: (arch: "X86" | "X64" | "ARM" | "ARM64"): Condition =>
+    expr("runner.arch").equals(arch),
 } as const;
 
 // --- helpers ---

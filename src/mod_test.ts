@@ -15,7 +15,8 @@ import {
 import { resolveJobId, toKebabCase } from "./job.ts";
 import { resetStepCounter } from "./step.ts";
 
-const { status, isTag, isBranch, isEvent } = conditions;
+const { status, isTag, isBranch, isEvent, isRunnerOs, isRunnerArch } =
+  conditions;
 
 // reset step counter between tests for deterministic ids
 function setup() {
@@ -1642,6 +1643,130 @@ jobs:
       - name: Build
         if: matrix.cross != 'true'
         run: make
+`,
+  );
+});
+
+Deno.test("conditions.isRunnerOs() matches runner OS", () => {
+  setup();
+  const s = step({
+    name: "Linux only",
+    run: "echo hi",
+    if: isRunnerOs("Linux"),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Linux only
+        if: runner.os == 'Linux'
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("conditions.isRunnerArch() matches runner architecture", () => {
+  setup();
+  const s = step({
+    name: "ARM64 only",
+    run: "echo hi",
+    if: isRunnerArch("ARM64"),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ARM64 only
+        if: runner.arch == 'ARM64'
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("conditions.isRunnerOs().not() negates correctly", () => {
+  setup();
+  const s = step({
+    name: "Not Windows",
+    run: "echo hi",
+    if: isRunnerOs("Windows").not(),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Not Windows
+        if: runner.os != 'Windows'
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("conditions.isRunnerOs() composes with .and()", () => {
+  setup();
+  const s = step({
+    name: "Linux ARM64",
+    run: "echo hi",
+    if: isRunnerOs("Linux").and(isRunnerArch("ARM64")),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Linux ARM64
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: echo hi
 `,
   );
 });
