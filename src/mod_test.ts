@@ -10,6 +10,7 @@ import {
   expr,
   job,
   step,
+  StepRef,
 } from "./mod.ts";
 import { resolveJobId, toKebabCase } from "./job.ts";
 import { resetStepCounter } from "./step.ts";
@@ -3760,4 +3761,387 @@ Deno.test("shared step in multiple conditional composites gets OR condition", ()
   // leaf steps keep their individual conditions
   assertEquals(testStep?.if, "matrix.job == 'test'");
   assertEquals(benchStep?.if, "matrix.job == 'bench'");
+});
+
+// --- step.dependsOn() / step.if() prefix builder API ---
+
+Deno.test("step.dependsOn() puts dependency before step config", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const build = step.dependsOn(checkout)({
+    name: "Build",
+    run: "cargo build",
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [build],
+    }],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("step.dependsOn() returns StepRef", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const build = step.dependsOn(checkout)({
+    name: "Build",
+    run: "cargo build",
+  });
+  assertEquals(build instanceof StepRef, true);
+});
+
+Deno.test("step.if() puts condition before step config", () => {
+  setup();
+  const s = step.if(isBranch("main"))({
+    name: "Deploy",
+    run: "deploy.sh",
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [s],
+    }],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        if: github.ref == 'refs/heads/main'
+        run: deploy.sh
+`,
+  );
+});
+
+Deno.test("step.dependsOn().if() chains both before config", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const build = step.dependsOn(checkout).if(isBranch("main"))({
+    name: "Build",
+    run: "cargo build",
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [build],
+    }],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        if: github.ref == 'refs/heads/main'
+      - name: Build
+        if: github.ref == 'refs/heads/main'
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("step.if().dependsOn() order doesn't matter", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const build = step.if(isBranch("main")).dependsOn(checkout)({
+    name: "Build",
+    run: "cargo build",
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [build],
+    }],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        if: github.ref == 'refs/heads/main'
+      - name: Build
+        if: github.ref == 'refs/heads/main'
+        run: cargo build
+`,
+  );
+});
+
+Deno.test("step.dependsOn() with composite steps", () => {
+  setup();
+  const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
+  const group = step.dependsOn(checkout)(
+    { uses: "dsherret/rust-toolchain-file@v1" },
+    { uses: "Swatinem/rust-cache@v2" },
+  );
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [group],
+    }],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - uses: dsherret/rust-toolchain-file@v1
+      - uses: Swatinem/rust-cache@v2
+`,
+  );
+});
+
+Deno.test("step.dependsOn().if() with composite steps", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const group = step.dependsOn(checkout).if(conditions.isTag())(
+    { name: "Build (Release)", run: "cargo build --release" },
+    { name: "Build cross (Release)", run: "cross build --release" },
+  );
+
+  const build = step.dependsOn(group)({
+    name: "Post-build",
+    run: "echo done",
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [build],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        if: 'startsWith(github.ref, ''refs/tags/'')'
+      - name: Build (Release)
+        if: 'startsWith(github.ref, ''refs/tags/'')'
+        run: cargo build --release
+      - name: Build cross (Release)
+        if: 'startsWith(github.ref, ''refs/tags/'')'
+        run: cross build --release
+      - name: Post-build
+        run: echo done
+`,
+  );
+});
+
+Deno.test("step.if() ANDs multiple conditions", () => {
+  setup();
+  const s = step.if(isBranch("main")).if(expr("matrix.os").equals("linux"))({
+    name: "Deploy",
+    run: "deploy.sh",
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [s],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        if: github.ref == 'refs/heads/main' && matrix.os == 'linux'
+        run: deploy.sh
+`,
+  );
+});
+
+Deno.test("step.comesAfter() prefix form", () => {
+  setup();
+  const a = step({ name: "A", run: "a" });
+  const b = step.comesAfter(a)({ name: "B", run: "b" });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [a, b],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  // b should come after a
+  const lines = yaml.split("\n");
+  const aIdx = lines.findIndex((l) => l.includes("name: A"));
+  const bIdx = lines.findIndex((l) => l.includes("name: B"));
+  assertEquals(aIdx < bIdx, true);
+});
+
+Deno.test("step.dependsOn() with multiple deps", () => {
+  setup();
+  const a = step({ name: "A", run: "a" });
+  const b = step({ name: "B", run: "b" });
+  const c = step.dependsOn(a, b)({ name: "C", run: "c" });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [c],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  // Both a and b should appear before c
+  const lines = yaml.split("\n");
+  const aIdx = lines.findIndex((l) => l.includes("name: A"));
+  const bIdx = lines.findIndex((l) => l.includes("name: B"));
+  const cIdx = lines.findIndex((l) => l.includes("name: C"));
+  assertEquals(aIdx < cIdx, true);
+  assertEquals(bIdx < cIdx, true);
+});
+
+Deno.test("prefix builder result can still chain .if() for per-usage condition", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const build = step.dependsOn(checkout)({
+    name: "Build",
+    run: "cargo build",
+  });
+
+  // Per-usage .if() on the StepRef returned by builder
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j1",
+      runsOn: "ubuntu-latest",
+      steps: [build.if(isBranch("main"))],
+    }, {
+      id: "j2",
+      runsOn: "ubuntu-latest",
+      steps: [build.if(conditions.isTag())],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  // j1 should have branch condition, j2 should have tag condition
+  const parsed = parse(yaml) as Record<string, unknown>;
+  const jobs = parsed.jobs as Record<
+    string,
+    { steps: Array<Record<string, string>> }
+  >;
+  assertEquals(
+    jobs.j1.steps[1].if,
+    "github.ref == 'refs/heads/main'",
+  );
+  assertEquals(
+    jobs.j2.steps[1].if,
+    "startsWith(github.ref, 'refs/tags/')",
+  );
+});
+
+Deno.test("prefix .if() ANDs with config.if instead of dropping it", () => {
+  setup();
+  const s = step.if(isBranch("main"))({
+    name: "Deploy",
+    run: "deploy.sh",
+    if: expr("matrix.os").equals("linux"),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [s],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        if: github.ref == 'refs/heads/main' && matrix.os == 'linux'
+        run: deploy.sh
+`,
+  );
 });

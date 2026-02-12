@@ -157,17 +157,27 @@ export class Step<O extends string = never> implements ExpressionSource {
   }
 }
 
-export function step<const O extends string = never>(
-  config: StepConfig<O>,
-): Step<O>;
-export function step(
-  first: Step<string> | StepRef<string> | StepConfig,
-  second: Step<string> | StepRef<string> | StepConfig,
-  ...rest: (Step<string> | StepRef<string> | StepConfig)[]
-): Step<never>;
-export function step(
-  ...args: unknown[]
-): Step<string> {
+// --- StepBuilder: prefix API for conditions/deps before step config ---
+
+export interface StepBuilder {
+  <const O extends string = never>(config: StepConfig<O>): StepRef<O>;
+  (
+    first: Step<string> | StepRef<string> | StepConfig,
+    second: Step<string> | StepRef<string> | StepConfig,
+    ...rest: (Step<string> | StepRef<string> | StepConfig)[]
+  ): StepRef<never>;
+  if(condition: ConditionLike): StepBuilder;
+  dependsOn(...deps: StepLike[]): StepBuilder;
+  comesAfter(...deps: StepLike[]): StepBuilder;
+}
+
+interface StepBuilderInit {
+  condition?: ConditionLike;
+  dependencies?: readonly StepLike[];
+  afterDependencies?: readonly StepLike[];
+}
+
+function buildStepFromArgs(...args: unknown[]): Step<string> {
   if (args.length === 1) {
     return new Step(args[0] as StepConfig);
   }
@@ -181,6 +191,79 @@ export function step(
   }
   return new Step(children);
 }
+
+function andConditions(
+  existing: ConditionLike | undefined,
+  added: ConditionLike,
+): ConditionLike {
+  return existing != null
+    ? toCondition(existing).and(toCondition(added))
+    : added;
+}
+
+function createStepBuilder(init: StepBuilderInit): StepBuilder {
+  const builder = function (...args: unknown[]): StepRef<string> {
+    const s = buildStepFromArgs(...args);
+    // merge config.if into the builder condition so it's not silently dropped
+    const condition = s.config.if != null
+      ? andConditions(init.condition, s.config.if)
+      : init.condition;
+    return new StepRef(s, {
+      condition,
+      dependencies: init.dependencies ?? [],
+      afterDependencies: init.afterDependencies ?? [],
+    });
+  } as StepBuilder;
+
+  builder.if = (condition: ConditionLike): StepBuilder => {
+    return createStepBuilder({
+      ...init,
+      condition: andConditions(init.condition, condition),
+    });
+  };
+
+  builder.dependsOn = (...deps: StepLike[]): StepBuilder => {
+    return createStepBuilder({
+      ...init,
+      dependencies: [...(init.dependencies ?? []), ...deps],
+    });
+  };
+
+  builder.comesAfter = (...deps: StepLike[]): StepBuilder => {
+    return createStepBuilder({
+      ...init,
+      afterDependencies: [...(init.afterDependencies ?? []), ...deps],
+    });
+  };
+
+  return builder;
+}
+
+// --- step function with prefix builder methods ---
+
+export interface StepFunction {
+  <const O extends string = never>(config: StepConfig<O>): Step<O>;
+  (
+    first: Step<string> | StepRef<string> | StepConfig,
+    second: Step<string> | StepRef<string> | StepConfig,
+    ...rest: (Step<string> | StepRef<string> | StepConfig)[]
+  ): Step<never>;
+  if(condition: ConditionLike): StepBuilder;
+  dependsOn(...deps: StepLike[]): StepBuilder;
+  comesAfter(...deps: StepLike[]): StepBuilder;
+}
+
+export const step: StepFunction = Object.assign(
+  buildStepFromArgs as StepFunction,
+  {
+    if: (condition: ConditionLike): StepBuilder =>
+      createStepBuilder({ condition }),
+    dependsOn: (...deps: StepLike[]): StepBuilder =>
+      createStepBuilder({ dependencies: deps }),
+    comesAfter: (...deps: StepLike[]): StepBuilder =>
+      createStepBuilder({ afterDependencies: deps }),
+  },
+);
 
 // --- StepRef: immutable wrapper for per-usage deps/conditions ---
 
@@ -233,11 +316,8 @@ export class StepRef<O extends string = never> {
   }
 
   if(condition: ConditionLike): StepRef<O> {
-    const newCond = this.condition != null
-      ? toCondition(condition).and(toCondition(this.condition))
-      : condition;
     return new StepRef(this.step, {
-      condition: newCond,
+      condition: andConditions(this.condition, condition),
       dependencies: this.dependencies,
       afterDependencies: this.afterDependencies,
     });

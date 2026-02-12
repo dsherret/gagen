@@ -20,28 +20,28 @@ const checkout = step({
   uses: "actions/checkout@v6",
 });
 
-const test = step({
+const test = step.dependsOn(checkout)({
   name: "Test",
   run: "cargo test",
-}).dependsOn(checkout);
+});
 
 const installDeno = step({
   uses: "denoland/setup-deno@v2",
 });
 
-const lint = step(
-  {
-    name: "Clippy",
-    run: "cargo clippy",
-  },
-  step({
-    name: "Deno Lint",
-    run: "deno lint",
-  }).dependsOn(installDeno),
-)
+const lint = step
   .dependsOn(checkout)
   // this condition gets propagated to installDeno, but not checkout
-  .if(conditions.isBranch("main").not());
+  .if(conditions.isBranch("main").not())(
+    {
+      name: "Clippy",
+      run: "cargo clippy",
+    },
+    step.dependsOn(installDeno)({
+      name: "Deno Lint",
+      run: "deno lint",
+    }),
+  );
 
 // only specify the leaf steps — the other steps are pulled in automatically
 createWorkflow({
@@ -95,11 +95,12 @@ os.equals("linux").and(ref.startsWith("refs/tags/"));
 // => matrix.os == 'linux' && startsWith(github.ref, 'refs/tags/')
 
 // use on steps
-const deploy = step({
+const deploy = step.dependsOn(build).if(
+  ref.equals("refs/heads/main").and(os.equals("linux")),
+)({
   name: "Deploy",
   run: "deploy.sh",
-  if: ref.equals("refs/heads/main").and(os.equals("linux")),
-}).dependsOn(build);
+});
 ```
 
 ## Common conditions
@@ -128,17 +129,15 @@ isEvent("push"); // github.event_name == 'push'
 isEvent("pull_request"); // github.event_name == 'pull_request'
 
 // compose freely with .and() / .or() / .not()
-const deploy = step({
+const deploy = step.dependsOn(build).if(isBranch("main").and(isEvent("push")))({
   name: "Deploy",
   run: "deploy.sh",
-  if: isBranch("main").and(isEvent("push")),
-}).dependsOn(build);
+});
 
-const cleanup = step({
+const cleanup = step.dependsOn(build).if(status.always())({
   name: "Cleanup",
   run: "rm -rf dist",
-  if: status.always(),
-}).dependsOn(build);
+});
 ```
 
 ## Ternary expressions
@@ -179,11 +178,10 @@ This avoids running expensive setup steps when they aren't needed:
 
 ```ts
 const checkout = step({ uses: "actions/checkout@v6" });
-const build = step({ run: "cargo build" }).dependsOn(checkout);
-const test = step({
+const build = step.dependsOn(checkout)({ run: "cargo build" });
+const test = step.dependsOn(build).if(expr("matrix.job").equals("test"))({
   run: "cargo test",
-  if: expr("matrix.job").equals("test"),
-}).dependsOn(build);
+});
 
 // only test is passed — checkout and build inherit its condition
 createWorkflow({
@@ -199,11 +197,12 @@ When multiple leaf steps have different conditions, dependencies get the OR of
 those conditions:
 
 ```ts
-const test = step({ run: "cargo test", if: jobExpr.equals("test") }).dependsOn(
-  checkout,
-);
-const bench = step({ run: "cargo bench", if: jobExpr.equals("bench") })
-  .dependsOn(checkout);
+const test = step.dependsOn(checkout).if(jobExpr.equals("test"))({
+  run: "cargo test",
+});
+const bench = step.dependsOn(checkout).if(jobExpr.equals("bench"))({
+  run: "cargo bench",
+});
 
 createWorkflow({
   ...,
@@ -218,12 +217,11 @@ To prevent propagation, pass the unconditional steps to `steps` as well. Leaf
 steps act as propagation barriers:
 
 ```ts
-const build = step({ run: "cargo build" }).dependsOn(checkout);
-const test = step({ run: "cargo test" }).dependsOn(build);
-const linuxOnly = step({
+const build = step.dependsOn(checkout)({ run: "cargo build" });
+const test = step.dependsOn(build)({ run: "cargo test" });
+const linuxOnly = step.dependsOn(build, test).if(os.equals("linux"))({
   run: "linux-specific",
-  if: os.equals("linux"),
-}).dependsOn(build, test);
+});
 
 // test is a leaf with no condition — blocks propagation to build and checkout
 createWorkflow({
@@ -280,12 +278,12 @@ topologically sorted:
 
 ```ts
 const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
-const buildA = step({ name: "Build A", run: "make a" }).dependsOn(checkout);
-const buildB = step({ name: "Build B", run: "make b" }).dependsOn(checkout);
-const integrate = step({ name: "Integrate", run: "make all" }).dependsOn(
-  buildA,
-  buildB,
-);
+const buildA = step.dependsOn(checkout)({ name: "Build A", run: "make a" });
+const buildB = step.dependsOn(checkout)({ name: "Build B", run: "make b" });
+const integrate = step.dependsOn(buildA, buildB)({
+  name: "Integrate",
+  run: "make all",
+});
 
 createWorkflow({
   ...,
@@ -309,11 +307,10 @@ const setupDeno = step({
   with: { "deno-version": "canary" },
 });
 
-const checkout = step({ uses: "actions/checkout@v6" })
-  // ensure checkout runs after setupDeno, without making checkout depend on it
-  .comesAfter(setupDeno);
-const build = step({ run: "cargo build" }).dependsOn(checkout);
-const lint = step({ run: "deno lint" }).dependsOn(setupDeno, checkout);
+// ensure checkout runs after setupDeno, without making checkout depend on it
+const checkout = step.comesAfter(setupDeno)({ uses: "actions/checkout@v6" });
+const build = step.dependsOn(checkout)({ run: "cargo build" });
+const lint = step.dependsOn(setupDeno, checkout)({ run: "deno lint" });
 
 createWorkflow({
   ...,
@@ -493,9 +490,10 @@ const buildStep = step({ name: "Build", run: "make build" });
 const upload = artifact.upload({ path: "dist/", retentionDays: 5 });
 
 const download = artifact.download({ path: "dist/" });
-const deployStep = step({ name: "Deploy", run: "make deploy" }).dependsOn(
-  download,
-);
+const deployStep = step.dependsOn(download)({
+  name: "Deploy",
+  run: "make deploy",
+});
 
 const wf = createWorkflow({
   name: "CI",
