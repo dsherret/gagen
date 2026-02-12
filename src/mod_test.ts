@@ -4200,3 +4200,50 @@ jobs:
 `,
   );
 });
+
+Deno.test("prefix step.dependsOn() with config.if does not duplicate conditions on deps", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const conditional = step({
+    name: "Setup",
+    run: "setup.sh",
+    if: "runner.os == 'Linux'",
+  });
+  // use prefix dependsOn where the step itself has a config.if
+  const build = step.dependsOn(checkout, conditional)({
+    name: "Build",
+    run: "cargo build",
+    if: "runner.os == 'Linux'",
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [build],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  // the condition on dependencies should appear only once, not duplicated
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        if: runner.os == 'Linux'
+      - name: Setup
+        if: runner.os == 'Linux'
+        run: setup.sh
+      - name: Build
+        if: runner.os == 'Linux'
+        run: cargo build
+`,
+  );
+});

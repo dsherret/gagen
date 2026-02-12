@@ -204,12 +204,12 @@ function andConditions(
 function createStepBuilder(init: StepBuilderInit): StepBuilder {
   const builder = function (...args: unknown[]): StepRef<string> {
     const s = buildStepFromArgs(...args);
-    // merge config.if into the builder condition so it's not silently dropped
-    const condition = s.config.if != null
-      ? andConditions(init.condition, s.config.if)
-      : init.condition;
+    // don't merge config.if here — it's already picked up by
+    // computeEffectiveConditions (for the step itself) and
+    // propagatableConfigIf (for dependency context propagation).
+    // Merging it here would cause it to be counted twice.
     return new StepRef(s, {
-      condition,
+      condition: init.condition,
       dependencies: init.dependencies ?? [],
       afterDependencies: init.afterDependencies ?? [],
     });
