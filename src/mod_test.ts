@@ -4098,7 +4098,10 @@ Deno.test("prefix builder result can still chain .if() for per-usage condition",
   const yaml = wf.toYamlString();
   // j1 should have branch condition, j2 should have tag condition
   const parsed = parse(yaml) as Record<string, unknown>;
-  const jobs = parsed.jobs as Record<string, { steps: Array<Record<string, string>> }>;
+  const jobs = parsed.jobs as Record<
+    string,
+    { steps: Array<Record<string, string>> }
+  >;
   assertEquals(
     jobs.j1.steps[1].if,
     "github.ref == 'refs/heads/main'",

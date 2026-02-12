@@ -95,7 +95,9 @@ os.equals("linux").and(ref.startsWith("refs/tags/"));
 // => matrix.os == 'linux' && startsWith(github.ref, 'refs/tags/')
 
 // use on steps
-const deploy = step.dependsOn(build).if(ref.equals("refs/heads/main").and(os.equals("linux")))({
+const deploy = step.dependsOn(build).if(
+  ref.equals("refs/heads/main").and(os.equals("linux")),
+)({
   name: "Deploy",
   run: "deploy.sh",
 });
