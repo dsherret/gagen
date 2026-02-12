@@ -332,9 +332,7 @@ export const conditions = {
    * ```
    */
   isTag: (tag?: string): Condition =>
-    tag != null
-      ? ref.equals(`refs/tags/${tag}`)
-      : ref.startsWith("refs/tags/"),
+    tag != null ? ref.equals(`refs/tags/${tag}`) : ref.startsWith("refs/tags/"),
   /**
    * Check if the ref is a specific branch.
    *
