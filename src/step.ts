@@ -160,12 +160,9 @@ export class Step<O extends string = never> implements ExpressionSource {
 // --- StepBuilder: prefix API for conditions/deps before step config ---
 
 export interface StepBuilder {
-  <const O extends string = never>(config: StepConfig<O>): StepRef<O>;
-  (
-    first: Step<string> | StepRef<string> | StepConfig,
-    second: Step<string> | StepRef<string> | StepConfig,
-    ...rest: (Step<string> | StepRef<string> | StepConfig)[]
-  ): StepRef<never>;
+  <const O extends string = never>(
+    ...args: (StepConfig<O> | Step<string> | StepRef<string>)[]
+  ): StepRef<O>;
   if(condition: ConditionLike): StepBuilder;
   dependsOn(...deps: StepLike[]): StepBuilder;
   comesAfter(...deps: StepLike[]): StepBuilder;
@@ -178,6 +175,9 @@ interface StepBuilderInit {
 }
 
 function buildStepFromArgs(...args: unknown[]): Step<string> {
+  if (args.length === 0) {
+    throw new Error("step() requires at least one argument");
+  }
   if (args.length === 1) {
     return new Step(args[0] as StepConfig);
   }
@@ -242,12 +242,9 @@ function createStepBuilder(init: StepBuilderInit): StepBuilder {
 // --- step function with prefix builder methods ---
 
 export interface StepFunction {
-  <const O extends string = never>(config: StepConfig<O>): Step<O>;
-  (
-    first: Step<string> | StepRef<string> | StepConfig,
-    second: Step<string> | StepRef<string> | StepConfig,
-    ...rest: (Step<string> | StepRef<string> | StepConfig)[]
-  ): Step<never>;
+  <const O extends string = never>(
+    ...args: (StepConfig<O> | Step<string> | StepRef<string>)[]
+  ): Step<O>;
   if(condition: ConditionLike): StepBuilder;
   dependsOn(...deps: StepLike[]): StepBuilder;
   comesAfter(...deps: StepLike[]): StepBuilder;
