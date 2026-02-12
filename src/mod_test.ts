@@ -15,7 +15,8 @@ import {
 import { resolveJobId, toKebabCase } from "./job.ts";
 import { resetStepCounter } from "./step.ts";
 
-const { status, isTag, isBranch, isEvent } = conditions;
+const { status, isTag, isBranch, isEvent, isRunnerOs, isRunnerArch } =
+  conditions;
 
 // reset step counter between tests for deterministic ids
 function setup() {
@@ -1068,6 +1069,61 @@ jobs:
   );
 });
 
+Deno.test("matrix values with Condition/ExpressionValue auto-serialize to ${{ }}", () => {
+  setup();
+  const isDenoland = expr("github.repository").equals("denoland/deno");
+  const isMainBranch = isBranch("main");
+  const isMainOrTag = isMainBranch.or(isTag());
+
+  const matrix = defineMatrix({
+    include: [
+      {
+        os: "linux",
+        runner: isDenoland.then("xl-runner").else("ubuntu-latest"),
+        skip: isMainOrTag.not(),
+      },
+      {
+        os: "macos",
+        runner: "macos-latest",
+        skip: false,
+      },
+    ],
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: matrix.runner,
+      strategy: { matrix },
+      steps: [step({ name: "Build", run: "make" })],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  const parsed = parse(yaml) as Record<string, unknown>;
+  const jobs = parsed.jobs as Record<
+    string,
+    { strategy: { matrix: { include: Record<string, unknown>[] } } }
+  >;
+  const include = jobs.build.strategy.matrix.include;
+
+  // Condition and ExpressionValue should be auto-wrapped in ${{ }}
+  assertEquals(
+    include[0].runner,
+    "${{ github.repository == 'denoland/deno' && 'xl-runner' || 'ubuntu-latest' }}",
+  );
+  assertEquals(
+    include[0].skip,
+    "${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) }}",
+  );
+
+  // plain values should be unchanged
+  assertEquals(include[1].runner, "macos-latest");
+  assertEquals(include[1].skip, false);
+});
+
 Deno.test("matrix expressions work in step conditions", () => {
   setup();
   const matrix = defineMatrix({
@@ -1587,6 +1643,130 @@ jobs:
       - name: Build
         if: matrix.cross != 'true'
         run: make
+`,
+  );
+});
+
+Deno.test("conditions.isRunnerOs() matches runner OS", () => {
+  setup();
+  const s = step({
+    name: "Linux only",
+    run: "echo hi",
+    if: isRunnerOs("Linux"),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Linux only
+        if: runner.os == 'Linux'
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("conditions.isRunnerArch() matches runner architecture", () => {
+  setup();
+  const s = step({
+    name: "ARM64 only",
+    run: "echo hi",
+    if: isRunnerArch("ARM64"),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ARM64 only
+        if: runner.arch == 'ARM64'
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("conditions.isRunnerOs().not() negates correctly", () => {
+  setup();
+  const s = step({
+    name: "Not Windows",
+    run: "echo hi",
+    if: isRunnerOs("Windows").not(),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Not Windows
+        if: runner.os != 'Windows'
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("conditions.isRunnerOs() composes with .and()", () => {
+  setup();
+  const s = step({
+    name: "Linux ARM64",
+    run: "echo hi",
+    if: isRunnerOs("Linux").and(isRunnerArch("ARM64")),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Linux ARM64
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: echo hi
 `,
   );
 });
@@ -4142,6 +4322,53 @@ jobs:
       - name: Deploy
         if: github.ref == 'refs/heads/main' && matrix.os == 'linux'
         run: deploy.sh
+`,
+  );
+});
+
+Deno.test("prefix step.dependsOn() with config.if does not duplicate conditions on deps", () => {
+  setup();
+  const checkout = step({ uses: "actions/checkout@v6" });
+  const conditional = step({
+    name: "Setup",
+    run: "setup.sh",
+    if: "runner.os == 'Linux'",
+  });
+  // use prefix dependsOn where the step itself has a config.if
+  const build = step.dependsOn(checkout, conditional)({
+    name: "Build",
+    run: "cargo build",
+    if: "runner.os == 'Linux'",
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [build],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  // the condition on dependencies should appear only once, not duplicated
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        if: runner.os == 'Linux'
+      - name: Setup
+        if: runner.os == 'Linux'
+        run: setup.sh
+      - name: Build
+        if: runner.os == 'Linux'
+        run: cargo build
 `,
   );
 });
