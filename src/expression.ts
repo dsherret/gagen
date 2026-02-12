@@ -96,11 +96,15 @@ export abstract class Condition {
     this.sources = sources;
   }
 
-  and(other: Condition): Condition {
+  and(other: Condition | boolean): Condition {
+    if (other === true) return this;
+    if (other === false) return new RawCondition("false", this.sources);
     return new LogicalCondition("&&", this, other, unionSources(this, other));
   }
 
-  or(other: Condition): Condition {
+  or(other: Condition | boolean): Condition {
+    if (other === false) return this;
+    if (other === true) return new RawCondition("true", this.sources);
     return new LogicalCondition("||", this, other, unionSources(this, other));
   }
 

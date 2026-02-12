@@ -220,7 +220,27 @@ Deno.test("chained and is flat (left-associative)", () => {
   assertEquals(c.toExpression(), "a == '1' && b == '2' && c == '3'");
 });
 
+Deno.test("and(true) returns the condition unchanged", () => {
+  const c = cmp("a", "1");
+  assertEquals(c.and(true).toExpression(), "a == '1'");
+});
+
+Deno.test("and(false) produces false", () => {
+  const c = cmp("a", "1");
+  assertEquals(c.and(false).toExpression(), "false");
+});
+
 // --- Condition: or ---
+
+Deno.test("or(false) returns the condition unchanged", () => {
+  const c = cmp("a", "1");
+  assertEquals(c.or(false).toExpression(), "a == '1'");
+});
+
+Deno.test("or(true) produces true", () => {
+  const c = cmp("a", "1");
+  assertEquals(c.or(true).toExpression(), "true");
+});
 
 Deno.test("or combines two conditions", () => {
   const c = cmp("a", "1").or(cmp("b", "2"));
