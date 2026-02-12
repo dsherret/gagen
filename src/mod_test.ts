@@ -4017,7 +4017,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy
-        if: matrix.os == 'linux' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && matrix.os == 'linux'
         run: deploy.sh
 `,
   );
@@ -4109,5 +4109,39 @@ Deno.test("prefix builder result can still chain .if() for per-usage condition",
   assertEquals(
     jobs.j2.steps[1].if,
     "startsWith(github.ref, 'refs/tags/')",
+  );
+});
+
+Deno.test("prefix .if() ANDs with config.if instead of dropping it", () => {
+  setup();
+  const s = step.if(isBranch("main"))({
+    name: "Deploy",
+    run: "deploy.sh",
+    if: expr("matrix.os").equals("linux"),
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [s],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        if: github.ref == 'refs/heads/main' && matrix.os == 'linux'
+        run: deploy.sh
+`,
   );
 });
