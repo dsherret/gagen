@@ -157,17 +157,88 @@ export class Step<O extends string = never> implements ExpressionSource {
   }
 }
 
-export function step<const O extends string = never>(
-  config: StepConfig<O>,
-): Step<O>;
-export function step(
-  first: Step<string> | StepRef<string> | StepConfig,
-  second: Step<string> | StepRef<string> | StepConfig,
-  ...rest: (Step<string> | StepRef<string> | StepConfig)[]
-): Step<never>;
-export function step(
-  ...args: unknown[]
-): Step<string> {
+// --- StepBuilder: prefix API for conditions/deps before step config ---
+
+export interface StepBuilder {
+  <const O extends string = never>(config: StepConfig<O>): StepRef<O>;
+  (
+    first: Step<string> | StepRef<string> | StepConfig,
+    second: Step<string> | StepRef<string> | StepConfig,
+    ...rest: (Step<string> | StepRef<string> | StepConfig)[]
+  ): StepRef<never>;
+  if(condition: ConditionLike): StepBuilder;
+  dependsOn(...deps: StepLike[]): StepBuilder;
+  comesAfter(...deps: StepLike[]): StepBuilder;
+}
+
+interface StepBuilderInit {
+  condition?: ConditionLike;
+  dependencies?: readonly StepLike[];
+  afterDependencies?: readonly StepLike[];
+}
+
+function createStepBuilder(init: StepBuilderInit): StepBuilder {
+  const builder = function (...args: unknown[]): StepRef<string> {
+    let s: Step<string>;
+    if (args.length === 1) {
+      s = new Step(args[0] as StepConfig);
+    } else {
+      const children: StepLike[] = [];
+      for (const item of args) {
+        if (item instanceof Step || item instanceof StepRef) {
+          children.push(item);
+        } else {
+          children.push(new Step(item as StepConfig));
+        }
+      }
+      s = new Step(children);
+    }
+    return new StepRef(s, {
+      condition: init.condition,
+      dependencies: init.dependencies ?? [],
+      afterDependencies: init.afterDependencies ?? [],
+    });
+  } as StepBuilder;
+
+  builder.if = (condition: ConditionLike): StepBuilder => {
+    const newCond = init.condition != null
+      ? toCondition(condition).and(toCondition(init.condition))
+      : condition;
+    return createStepBuilder({ ...init, condition: newCond });
+  };
+
+  builder.dependsOn = (...deps: StepLike[]): StepBuilder => {
+    return createStepBuilder({
+      ...init,
+      dependencies: [...(init.dependencies ?? []), ...deps],
+    });
+  };
+
+  builder.comesAfter = (...deps: StepLike[]): StepBuilder => {
+    return createStepBuilder({
+      ...init,
+      afterDependencies: [...(init.afterDependencies ?? []), ...deps],
+    });
+  };
+
+  return builder;
+}
+
+// --- step function with prefix builder methods ---
+
+export interface StepFunction {
+  <const O extends string = never>(config: StepConfig<O>): Step<O>;
+  (
+    first: Step<string> | StepRef<string> | StepConfig,
+    second: Step<string> | StepRef<string> | StepConfig,
+    ...rest: (Step<string> | StepRef<string> | StepConfig)[]
+  ): Step<never>;
+  if(condition: ConditionLike): StepBuilder;
+  dependsOn(...deps: StepLike[]): StepBuilder;
+  comesAfter(...deps: StepLike[]): StepBuilder;
+}
+
+function _step(...args: unknown[]): Step<string> {
   if (args.length === 1) {
     return new Step(args[0] as StepConfig);
   }
@@ -181,6 +252,15 @@ export function step(
   }
   return new Step(children);
 }
+
+_step.if = (condition: ConditionLike): StepBuilder =>
+  createStepBuilder({ condition });
+_step.dependsOn = (...deps: StepLike[]): StepBuilder =>
+  createStepBuilder({ dependencies: deps });
+_step.comesAfter = (...deps: StepLike[]): StepBuilder =>
+  createStepBuilder({ afterDependencies: deps });
+
+export const step: StepFunction = _step as unknown as StepFunction;
 
 // --- StepRef: immutable wrapper for per-usage deps/conditions ---
 
