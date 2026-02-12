@@ -1068,6 +1068,61 @@ jobs:
   );
 });
 
+Deno.test("matrix values with Condition/ExpressionValue auto-serialize to ${{ }}", () => {
+  setup();
+  const isDenoland = expr("github.repository").equals("denoland/deno");
+  const isMainBranch = isBranch("main");
+  const isMainOrTag = isMainBranch.or(isTag());
+
+  const matrix = defineMatrix({
+    include: [
+      {
+        os: "linux",
+        runner: isDenoland.then("xl-runner").else("ubuntu-latest"),
+        skip: isMainOrTag.not(),
+      },
+      {
+        os: "macos",
+        runner: "macos-latest",
+        skip: false,
+      },
+    ],
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: matrix.runner,
+      strategy: { matrix },
+      steps: [step({ name: "Build", run: "make" })],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  const parsed = parse(yaml) as Record<string, unknown>;
+  const jobs = parsed.jobs as Record<
+    string,
+    { strategy: { matrix: { include: Record<string, unknown>[] } } }
+  >;
+  const include = jobs.build.strategy.matrix.include;
+
+  // Condition and ExpressionValue should be auto-wrapped in ${{ }}
+  assertEquals(
+    include[0].runner,
+    "${{ github.repository == 'denoland/deno' && 'xl-runner' || 'ubuntu-latest' }}",
+  );
+  assertEquals(
+    include[0].skip,
+    "${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) }}",
+  );
+
+  // plain values should be unchanged
+  assertEquals(include[1].runner, "macos-latest");
+  assertEquals(include[1].skip, false);
+});
+
 Deno.test("matrix expressions work in step conditions", () => {
   setup();
   const matrix = defineMatrix({
