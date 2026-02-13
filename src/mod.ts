@@ -30,12 +30,18 @@ export type {
 export {
   Condition,
   conditions,
+  defineExprObj,
   ElseIfBuilder,
   expr,
   ExpressionValue,
   ThenBuilder,
 } from "./expression.ts";
-export type { ExpressionSource, TernaryValue } from "./expression.ts";
+export type {
+  ExpressionSource,
+  ExprMap,
+  ExprOf,
+  TernaryValue,
+} from "./expression.ts";
 export { defineMatrix, Matrix } from "./matrix.ts";
 export type {
   PermissionLevel,

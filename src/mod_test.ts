@@ -3,11 +3,14 @@ import { assertEquals, assertThrows } from "@std/assert";
 import { parse } from "@std/yaml/parse";
 import { stringify } from "@std/yaml/stringify";
 import {
+  Condition,
   conditions,
   createWorkflow,
   defineArtifact,
+  defineExprObj,
   defineMatrix,
   expr,
+  ExpressionValue,
   job,
   step,
   StepRef,
@@ -4525,6 +4528,148 @@ jobs:
       - uses: actions/checkout@v6
       - name: Test
         run: npm test
+`,
+  );
+});
+
+// --- defineExprObj ---
+
+Deno.test("defineExprObj: string values become ExpressionValue", () => {
+  const m = defineExprObj({ os: "linux" });
+  assertEquals(m.os instanceof ExpressionValue, true);
+  // serializes inline, not as ${{ }}
+  assertEquals(m.os.toString(), "linux");
+});
+
+Deno.test("defineExprObj: string values serialize inline in YAML", () => {
+  setup();
+  const m = defineExprObj({ os: "linux" });
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [step({ name: "Test", run: "echo test", env: { OS: m.os } })],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        env:
+          OS: linux
+        run: echo test
+`,
+  );
+});
+
+Deno.test("defineExprObj: boolean true becomes Condition", () => {
+  const m = defineExprObj({ skip: true });
+  assertEquals(m.skip instanceof Condition, true);
+  assertEquals(m.skip.toExpression(), "true");
+});
+
+Deno.test("defineExprObj: boolean false becomes Condition", () => {
+  const m = defineExprObj({ skip: false });
+  assertEquals(m.skip instanceof Condition, true);
+  assertEquals(m.skip.toExpression(), "false");
+});
+
+Deno.test("defineExprObj: Condition values pass through", () => {
+  const cond = isBranch("main");
+  const m = defineExprObj({ skip: cond });
+  assertEquals(m.skip, cond);
+});
+
+Deno.test("defineExprObj: ExpressionValue values pass through", () => {
+  const e = expr("matrix.os");
+  const m = defineExprObj({ os: e });
+  assertEquals(m.os, e);
+});
+
+Deno.test("defineExprObj: number values become ExpressionValue", () => {
+  const m = defineExprObj({ count: 42 });
+  assertEquals(m.count instanceof ExpressionValue, true);
+  assertEquals(m.count.toString(), "42");
+});
+
+Deno.test("defineExprObj: .equals() works on inline string values", () => {
+  const m = defineExprObj({ os: "linux" });
+  const cond = m.os.equals("linux");
+  assertEquals(cond.toExpression(), "'linux' == 'linux'");
+});
+
+Deno.test("defineExprObj: boolean condition usable in step.if()", () => {
+  setup();
+  const m = defineExprObj({ skip: false });
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [step.if(m.skip.not())({ name: "Test", run: "echo test" })],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        if: '!false'
+        run: echo test
+`,
+  );
+});
+
+Deno.test("defineExprObj: mixed object end-to-end", () => {
+  setup();
+  const m = defineExprObj({
+    os: "linux",
+    save_cache: true,
+    runner: "ubuntu-latest",
+  });
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: m.runner.toString(),
+      steps: [
+        step.if(m.save_cache)({
+          name: "Cache",
+          run: "cache save",
+          with: { os: m.os },
+        }),
+      ],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cache
+        if: 'true'
+        with:
+          os: linux
+        run: cache save
 `,
   );
 });
