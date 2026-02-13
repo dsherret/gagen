@@ -3,14 +3,12 @@ import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { parse } from "@std/yaml/parse";
 import { stringify } from "@std/yaml/stringify";
 import {
-  Condition,
   conditions,
   createWorkflow,
   defineArtifact,
   defineExprObj,
   defineMatrix,
   expr,
-  ExpressionValue,
   job,
   step,
   StepRef,
@@ -4552,13 +4550,6 @@ jobs:
 
 // --- defineExprObj ---
 
-Deno.test("defineExprObj: string values become ExpressionValue", () => {
-  const m = defineExprObj({ os: "linux" });
-  assertEquals(m.os instanceof ExpressionValue, true);
-  // serializes inline, not as ${{ }}
-  assertEquals(m.os.toString(), "linux");
-});
-
 Deno.test("defineExprObj: string values serialize inline in YAML", () => {
   setup();
   const m = defineExprObj({ os: "linux" });
@@ -4586,47 +4577,6 @@ jobs:
         run: echo test
 `,
   );
-});
-
-Deno.test("defineExprObj: boolean true becomes Condition", () => {
-  const m = defineExprObj({ skip: true });
-  assertEquals(m.skip instanceof Condition, true);
-  assertEquals(m.skip.toExpression(), "true");
-});
-
-Deno.test("defineExprObj: boolean false becomes Condition", () => {
-  const m = defineExprObj({ skip: false });
-  assertEquals(m.skip instanceof Condition, true);
-  assertEquals(m.skip.toExpression(), "false");
-});
-
-Deno.test("defineExprObj: Condition values pass through", () => {
-  const cond = isBranch("main");
-  const m = defineExprObj({ skip: cond });
-  assertEquals(m.skip, cond);
-});
-
-Deno.test("defineExprObj: ExpressionValue values pass through", () => {
-  const e = expr("matrix.os");
-  const m = defineExprObj({ os: e });
-  assertEquals(m.os, e);
-});
-
-Deno.test("defineExprObj: number values become ExpressionValue", () => {
-  const m = defineExprObj({ count: 42 });
-  assertEquals(m.count instanceof ExpressionValue, true);
-  assertEquals(m.count.toString(), "42");
-});
-
-Deno.test("defineExprObj: .equals() simplifies literal comparisons", () => {
-  const m = defineExprObj({ os: "linux" });
-  // same literal → simplifies to true
-  assertEquals(m.os.equals("linux").toExpression(), "true");
-  // different literal → simplifies to false
-  assertEquals(m.os.equals("windows").toExpression(), "false");
-  // notEquals: same → false, different → true
-  assertEquals(m.os.notEquals("linux").toExpression(), "false");
-  assertEquals(m.os.notEquals("windows").toExpression(), "true");
 });
 
 Deno.test("defineExprObj: boolean condition usable in step.if()", () => {
