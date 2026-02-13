@@ -2082,6 +2082,47 @@ jobs:
   );
 });
 
+Deno.test("step() with single Step instance returns it unchanged", () => {
+  setup();
+  const s = step({ name: "Build", run: "cargo build" });
+  // wrapping an existing Step in step() should not blow up
+  const wrapped = step(s);
+  assertEquals(wrapped, s);
+});
+
+Deno.test("step.if() wrapping a step() composite works", () => {
+  setup();
+  const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
+  const build = step({ name: "Build", run: "cargo build" });
+  const composite = step(checkout, build);
+  // this previously crashed with "config.outputs is not iterable"
+  const conditional = step.if("github.ref == 'refs/heads/main'")(composite);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [conditional] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        if: github.ref == 'refs/heads/main'
+      - name: Build
+        if: github.ref == 'refs/heads/main'
+        run: cargo build
+`,
+  );
+});
+
 // --- steps ordering ---
 
 Deno.test("steps order is respected over creation order", () => {
@@ -3016,7 +3057,7 @@ Deno.test("download in same job doesn't add needs", () => {
   setup();
   const artifact = defineArtifact("build-output");
   const upload = artifact.upload({ path: "dist/" });
-  const download = artifact.download({ path: "dist/" });
+  const download = artifact.download({ dirPath: "dist/" });
 
   const wf = createWorkflow({
     name: "test",
@@ -3050,7 +3091,7 @@ Deno.test("download in different job auto-infers needs", () => {
   setup();
   const artifact = defineArtifact("build-output");
   const upload = artifact.upload({ path: "dist/" });
-  const download = artifact.download({ path: "dist/" });
+  const download = artifact.download({ dirPath: "dist/" });
 
   const wf = createWorkflow({
     name: "test",
@@ -3115,81 +3156,10 @@ jobs:
   );
 });
 
-Deno.test("upload uses path from ArtifactOptions", () => {
-  setup();
-  const artifact = defineArtifact("build-output", { path: "dist/" });
-  const upload = artifact.upload();
-
-  const wf = createWorkflow({
-    name: "test",
-    on: {},
-    jobs: [
-      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
-    ],
-  });
-
-  assertEquals(
-    wf.toYamlString(),
-    `name: test
-on: {}
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/upload-artifact@v6
-        with:
-          name: build-output
-          path: dist/
-`,
-  );
-});
-
-Deno.test("upload config path overrides ArtifactOptions path", () => {
-  setup();
-  const artifact = defineArtifact("build-output", { path: "default/" });
-  const upload = artifact.upload({ path: "override/" });
-
-  const wf = createWorkflow({
-    name: "test",
-    on: {},
-    jobs: [
-      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
-    ],
-  });
-
-  assertEquals(
-    wf.toYamlString(),
-    `name: test
-on: {}
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/upload-artifact@v6
-        with:
-          name: build-output
-          path: override/
-`,
-  );
-});
-
-Deno.test("upload throws when no path is set", () => {
-  setup();
-  const artifact = defineArtifact("build-output");
-  assertThrows(
-    () => artifact.upload(),
-    Error,
-    "upload requires a path",
-  );
-});
-
 Deno.test("upload retentionDays from ArtifactOptions", () => {
   setup();
-  const artifact = defineArtifact("build-output", {
-    path: "dist/",
-    retentionDays: 7,
-  });
-  const upload = artifact.upload();
+  const artifact = defineArtifact("build-output", { retentionDays: 7 });
+  const upload = artifact.upload({ path: "dist/" });
 
   const wf = createWorkflow({
     name: "test",
@@ -3218,11 +3188,8 @@ jobs:
 
 Deno.test("upload config retentionDays overrides ArtifactOptions", () => {
   setup();
-  const artifact = defineArtifact("build-output", {
-    path: "dist/",
-    retentionDays: 7,
-  });
-  const upload = artifact.upload({ retentionDays: 3 });
+  const artifact = defineArtifact("build-output", { retentionDays: 7 });
+  const upload = artifact.upload({ path: "dist/", retentionDays: 3 });
 
   const wf = createWorkflow({
     name: "test",
@@ -3245,46 +3212,6 @@ jobs:
           name: build-output
           path: dist/
           retention-days: 3
-`,
-  );
-});
-
-Deno.test("download uses path from ArtifactOptions", () => {
-  setup();
-  const artifact = defineArtifact("build-output", { path: "dist/" });
-  const upload = artifact.upload();
-  const download = artifact.download();
-
-  const wf = createWorkflow({
-    name: "test",
-    on: {},
-    jobs: [
-      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
-      { id: "deploy", runsOn: "ubuntu-latest", steps: [download] },
-    ],
-  });
-
-  assertEquals(
-    wf.toYamlString(),
-    `name: test
-on: {}
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/upload-artifact@v6
-        with:
-          name: build-output
-          path: dist/
-  deploy:
-    needs:
-      - build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v6
-        with:
-          name: build-output
-          path: dist/
 `,
   );
 });

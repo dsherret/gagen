@@ -1,44 +1,35 @@
 import { Step } from "../src/step.ts";
 
 export interface UploadConfig {
-  path?: string;
+  path: string;
   retentionDays?: number;
 }
 
 export interface DownloadConfig {
-  path?: string;
+  dirPath?: string;
 }
 
 export interface ArtifactOptions {
   version?: string;
-  path?: string;
   retentionDays?: number;
 }
 
 export class Artifact {
   readonly name: string;
   readonly #version: string;
-  readonly #path?: string;
   readonly #retentionDays?: number;
   #uploadStep?: Step<string>;
 
   constructor(name: string, options?: ArtifactOptions) {
     this.name = name;
     this.#version = options?.version ?? "v6";
-    this.#path = options?.path;
     this.#retentionDays = options?.retentionDays;
   }
 
-  upload(config: UploadConfig = {}): Step {
-    const path = config.path ?? this.#path;
-    if (path == null) {
-      throw new Error(
-        `Artifact "${this.name}": upload requires a path, either in ArtifactOptions or UploadConfig`,
-      );
-    }
+  upload(config: UploadConfig): Step {
     const withObj: Record<string, string | number | boolean> = {
       name: this.name,
-      path,
+      path: config.path,
     };
     const retentionDays = config.retentionDays ?? this.#retentionDays;
     if (retentionDays != null) {
@@ -56,9 +47,8 @@ export class Artifact {
     const withObj: Record<string, string | number | boolean> = {
       name: this.name,
     };
-    const path = config.path ?? this.#path;
-    if (path != null) {
-      withObj.path = path;
+    if (config.dirPath != null) {
+      withObj.path = config.dirPath;
     }
     return new Step(
       {
