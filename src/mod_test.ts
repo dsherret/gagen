@@ -1,5 +1,5 @@
 import process from "node:process";
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { parse } from "@std/yaml/parse";
 import { stringify } from "@std/yaml/stringify";
 import {
@@ -4600,10 +4600,15 @@ Deno.test("defineExprObj: number values become ExpressionValue", () => {
   assertEquals(m.count.toString(), "42");
 });
 
-Deno.test("defineExprObj: .equals() works on inline string values", () => {
+Deno.test("defineExprObj: .equals() simplifies literal comparisons", () => {
   const m = defineExprObj({ os: "linux" });
-  const cond = m.os.equals("linux");
-  assertEquals(cond.toExpression(), "'linux' == 'linux'");
+  // same literal → simplifies to true
+  assertEquals(m.os.equals("linux").toExpression(), "true");
+  // different literal → simplifies to false
+  assertEquals(m.os.equals("windows").toExpression(), "false");
+  // notEquals: same → false, different → true
+  assertEquals(m.os.notEquals("linux").toExpression(), "false");
+  assertEquals(m.os.notEquals("windows").toExpression(), "true");
 });
 
 Deno.test("defineExprObj: boolean condition usable in step.if()", () => {
@@ -4619,6 +4624,7 @@ Deno.test("defineExprObj: boolean condition usable in step.if()", () => {
     }],
   });
   const yaml = wf.toYamlString();
+  // !false simplifies to true → if line is omitted
   assertEquals(
     yaml,
     `name: test
@@ -4628,7 +4634,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Test
-        if: '!false'
         run: echo test
 `,
   );
@@ -4666,10 +4671,150 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Cache
-        if: 'true'
         with:
           os: linux
         run: cache save
+`,
+  );
+});
+
+// --- isAlwaysTrue omission tests ---
+
+Deno.test("always-true condition (literal true) is omitted from step if", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [step.if("true")({ name: "Test", run: "echo hi" })],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("!false is omitted as always-true", () => {
+  setup();
+  const m = defineExprObj({ skip: false });
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [step.if(m.skip.not())({ name: "Test", run: "echo hi" })],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  // !false is always true, so if should be omitted
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("always() is NOT omitted even though semantically always-true", () => {
+  setup();
+  const build = step({ name: "Build", run: "cargo build" });
+  const cleanup = step({
+    name: "Cleanup",
+    run: "rm -rf target",
+    if: status.always(),
+  }).dependsOn(build);
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [build, cleanup],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  // always() must be serialized — it overrides the default success() check
+  assertStringIncludes(yaml, "if: always()");
+});
+
+Deno.test("true && true is omitted as always-true", () => {
+  setup();
+  const m = defineExprObj({ a: true, b: true });
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [step.if(m.a.and(m.b))({ name: "Test", run: "echo hi" })],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("step with always-false condition is omitted from output", () => {
+  setup();
+  const m = defineExprObj({ os: "linux" });
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [
+        step({ name: "Always", run: "echo always" }),
+        step.if(m.os.equals("windows"))({
+          name: "Windows only",
+          run: "echo win",
+        }),
+        step({ name: "Also always", run: "echo also" }),
+      ],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Always
+        run: echo always
+      - name: Also always
+        run: echo also
 `,
   );
 });

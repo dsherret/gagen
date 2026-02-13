@@ -2,6 +2,8 @@ import {
   Condition,
   type ExpressionSource,
   ExpressionValue,
+  isAlwaysFalse,
+  isAlwaysTrue,
 } from "./expression.ts";
 import { Matrix } from "./matrix.ts";
 import type { Permissions } from "./permissions.ts";
@@ -513,7 +515,7 @@ export class Job implements ExpressionSource {
       result.needs = needs.map((j) => j.id);
     }
 
-    if (config.if != null) {
+    if (config.if != null && !isAlwaysTrue(config.if)) {
       result.if = serializeConditionLike(config.if);
     }
 
@@ -641,9 +643,12 @@ export class Job implements ExpressionSource {
       resolvedSteps,
       graph,
     );
-    result.steps = resolvedSteps.map((s) => {
-      return s.toYaml(effectiveConditions.get(s));
-    });
+    result.steps = resolvedSteps
+      .filter((s) => {
+        const cond = effectiveConditions.get(s);
+        return cond == null || !isAlwaysFalse(cond);
+      })
+      .map((s) => s.toYaml(effectiveConditions.get(s)));
 
     return result;
   }

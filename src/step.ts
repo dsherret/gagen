@@ -2,6 +2,7 @@ import {
   Condition,
   type ExpressionSource,
   ExpressionValue,
+  isAlwaysTrue,
   RawCondition,
   sourcesFrom,
 } from "./expression.ts";
@@ -127,7 +128,7 @@ export class Step<O extends string = never> implements ExpressionSource {
     }
 
     const ifCondition = effectiveIf ?? this.config.if;
-    if (ifCondition != null) {
+    if (ifCondition != null && !isAlwaysTrue(ifCondition)) {
       result.if = serializeConditionLike(ifCondition);
     }
 
