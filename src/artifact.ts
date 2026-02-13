@@ -1,7 +1,7 @@
 import { Step } from "../src/step.ts";
 
 export interface UploadConfig {
-  path: string;
+  path?: string;
   retentionDays?: number;
 }
 
@@ -11,25 +11,38 @@ export interface DownloadConfig {
 
 export interface ArtifactOptions {
   version?: string;
+  path?: string;
+  retentionDays?: number;
 }
 
 export class Artifact {
   readonly name: string;
   readonly #version: string;
+  readonly #path?: string;
+  readonly #retentionDays?: number;
   #uploadStep?: Step<string>;
 
   constructor(name: string, options?: ArtifactOptions) {
     this.name = name;
     this.#version = options?.version ?? "v6";
+    this.#path = options?.path;
+    this.#retentionDays = options?.retentionDays;
   }
 
-  upload(config: UploadConfig): Step {
+  upload(config: UploadConfig = {}): Step {
+    const path = config.path ?? this.#path;
+    if (path == null) {
+      throw new Error(
+        `Artifact "${this.name}": upload requires a path, either in ArtifactOptions or UploadConfig`,
+      );
+    }
     const withObj: Record<string, string | number | boolean> = {
       name: this.name,
-      path: config.path,
+      path,
     };
-    if (config.retentionDays != null) {
-      withObj["retention-days"] = config.retentionDays;
+    const retentionDays = config.retentionDays ?? this.#retentionDays;
+    if (retentionDays != null) {
+      withObj["retention-days"] = retentionDays;
     }
     const s = new Step({
       uses: `actions/upload-artifact@${this.#version}`,
@@ -43,8 +56,9 @@ export class Artifact {
     const withObj: Record<string, string | number | boolean> = {
       name: this.name,
     };
-    if (config.path != null) {
-      withObj.path = config.path;
+    const path = config.path ?? this.#path;
+    if (path != null) {
+      withObj.path = path;
     }
     return new Step(
       {
