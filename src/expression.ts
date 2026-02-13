@@ -559,3 +559,56 @@ export class ElseIfBuilder {
     );
   }
 }
+
+// --- inline value (serializes as plain value, not ${{ }}) ---
+
+class InlineValue extends ExpressionValue {
+  readonly #plainValue: string;
+
+  constructor(value: string | number) {
+    super(typeof value === "string" ? `'${value}'` : String(value));
+    this.#plainValue = String(value);
+  }
+
+  override toString(): string {
+    return this.#plainValue;
+  }
+}
+
+// --- defineExprObj: lift plain values into expression/condition types ---
+
+/** Maps a property type to Condition (for booleans/conditions) or ExpressionValue (for values). */
+export type ExprOf<T> = [T] extends [boolean | Condition] ? Condition
+  : ExpressionValue;
+
+/** Maps all properties of an object to their expression/condition form. */
+export type ExprMap<T extends Record<string, unknown>> = {
+  readonly [K in keyof T & string]: ExprOf<T[K]>;
+};
+
+/**
+ * Converts an object with plain values into an object with typed
+ * Condition/ExpressionValue properties. Booleans become Conditions,
+ * strings/numbers become ExpressionValues that serialize inline.
+ */
+export function defineExprObj<const T extends Record<string, unknown>>(
+  obj: T,
+): ExprMap<T> {
+  const result: Record<string, Condition | ExpressionValue> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value instanceof Condition) {
+      result[key] = value;
+    } else if (value instanceof ExpressionValue) {
+      result[key] = value;
+    } else if (typeof value === "boolean") {
+      result[key] = new RawCondition(String(value), EMPTY_SOURCES);
+    } else if (typeof value === "string") {
+      result[key] = new InlineValue(value);
+    } else if (typeof value === "number") {
+      result[key] = new InlineValue(value);
+    } else {
+      throw new Error(`Unsupported value type for key "${key}"`);
+    }
+  }
+  return result as ExprMap<T>;
+}
