@@ -164,6 +164,11 @@ export abstract class Condition {
     return false;
   }
 
+  /** returns true if this condition could possibly evaluate to true */
+  isPossiblyTrue(): boolean {
+    return !this.isAlwaysFalse();
+  }
+
   /** render without `${{ }}` wrapping */
   abstract toExpression(): string;
 
