@@ -1,9 +1,12 @@
 import { assertEquals } from "@std/assert";
 import {
   ComparisonCondition,
+  conditions,
   type ExpressionSource,
   ExpressionValue,
   FunctionCallCondition,
+  isAlwaysFalse,
+  isAlwaysTrue,
   RawCondition,
 } from "./expression.ts";
 
@@ -467,4 +470,38 @@ Deno.test("number literal equals simplifies", () => {
 Deno.test("non-literal equals does not simplify", () => {
   const v = new ExpressionValue("matrix.os");
   assertEquals(v.equals("linux").toExpression(), "matrix.os == 'linux'");
+});
+
+// --- conditions.isTrue() / conditions.isFalse() ---
+
+Deno.test("conditions.isTrue() produces true condition", () => {
+  const c = conditions.isTrue();
+  assertEquals(c.toExpression(), "true");
+  assertEquals(isAlwaysTrue(c), true);
+  assertEquals(isAlwaysFalse(c), false);
+});
+
+Deno.test("conditions.isFalse() produces false condition", () => {
+  const c = conditions.isFalse();
+  assertEquals(c.toExpression(), "false");
+  assertEquals(isAlwaysFalse(c), true);
+  assertEquals(isAlwaysTrue(c), false);
+});
+
+Deno.test("conditions.isTrue().and(condition) simplifies to condition", () => {
+  const c = conditions.isTrue().and(cmp("a", "1"));
+  assertEquals(c.toExpression(), "a == '1'");
+});
+
+Deno.test("conditions.isFalse().or(condition) simplifies to condition", () => {
+  const c = conditions.isFalse().or(cmp("a", "1"));
+  assertEquals(c.toExpression(), "a == '1'");
+});
+
+Deno.test("conditions.isTrue().not() simplifies to false", () => {
+  assertEquals(conditions.isTrue().not().toExpression(), "false");
+});
+
+Deno.test("conditions.isFalse().not() simplifies to true", () => {
+  assertEquals(conditions.isFalse().not().toExpression(), "true");
 });
