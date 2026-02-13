@@ -5,6 +5,7 @@ export type {
   StepBuilder,
   StepConfig,
   StepFunction,
+  MaybeStepLike,
   StepLike,
 } from "./step.ts";
 export { Job, job } from "./job.ts";
