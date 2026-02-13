@@ -169,7 +169,8 @@ export class Step<O extends string = never> implements ExpressionSource {
 
 export interface StepBuilder {
   <const O extends string = never>(
-    ...args: (StepConfig<O> | Step<string> | StepRef<string> | null | undefined)[]
+    ...args:
+      (StepConfig<O> | Step<string> | StepRef<string> | null | undefined)[]
   ): StepRef<O>;
   if(condition: ConditionLike): StepBuilder;
   dependsOn(...deps: MaybeStepLike[]): StepBuilder;
@@ -258,7 +259,8 @@ function createStepBuilder(init: StepBuilderInit): StepBuilder {
 
 export interface StepFunction {
   <const O extends string = never>(
-    ...args: (StepConfig<O> | Step<string> | StepRef<string> | null | undefined)[]
+    ...args:
+      (StepConfig<O> | Step<string> | StepRef<string> | null | undefined)[]
   ): Step<O>;
   if(condition: ConditionLike): StepBuilder;
   dependsOn(...deps: MaybeStepLike[]): StepBuilder;

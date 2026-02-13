@@ -2,10 +2,10 @@ export { Step, step, StepRef } from "./step.ts";
 export type {
   ConditionLike,
   ConfigValue,
+  MaybeStepLike,
   StepBuilder,
   StepConfig,
   StepFunction,
-  MaybeStepLike,
   StepLike,
 } from "./step.ts";
 export { Job, job } from "./job.ts";
