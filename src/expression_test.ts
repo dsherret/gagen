@@ -376,3 +376,95 @@ Deno.test("raw condition with && is parenthesized in or", () => {
   const c = cmp("a", "1").or(raw("b && c"));
   assertEquals(c.toExpression(), "a == '1' || (b && c)");
 });
+
+// --- construction-time simplification ---
+
+Deno.test("RawCondition('true').not() simplifies to false", () => {
+  assertEquals(raw("true").not().toExpression(), "false");
+});
+
+Deno.test("RawCondition('false').not() simplifies to true", () => {
+  assertEquals(raw("false").not().toExpression(), "true");
+});
+
+Deno.test("true.and(condition) simplifies to condition", () => {
+  const c = raw("true").and(cmp("a", "1"));
+  assertEquals(c.toExpression(), "a == '1'");
+});
+
+Deno.test("condition.and(true) simplifies to condition", () => {
+  const c = cmp("a", "1").and(raw("true"));
+  assertEquals(c.toExpression(), "a == '1'");
+});
+
+Deno.test("false.and(condition) simplifies to false", () => {
+  const c = raw("false").and(cmp("a", "1"));
+  assertEquals(c.toExpression(), "false");
+});
+
+Deno.test("condition.and(false condition) simplifies to false", () => {
+  const c = cmp("a", "1").and(raw("false"));
+  assertEquals(c.toExpression(), "false");
+});
+
+Deno.test("false.or(condition) simplifies to condition", () => {
+  const c = raw("false").or(cmp("a", "1"));
+  assertEquals(c.toExpression(), "a == '1'");
+});
+
+Deno.test("condition.or(false) simplifies to condition", () => {
+  const c = cmp("a", "1").or(raw("false"));
+  assertEquals(c.toExpression(), "a == '1'");
+});
+
+Deno.test("true.or(condition) simplifies to true", () => {
+  const c = raw("true").or(cmp("a", "1"));
+  assertEquals(c.toExpression(), "true");
+});
+
+Deno.test("condition.or(true condition) simplifies to true", () => {
+  const c = cmp("a", "1").or(raw("true"));
+  assertEquals(c.toExpression(), "true");
+});
+
+Deno.test("!false && condition simplifies to condition", () => {
+  const c = raw("false").not().and(cmp("a", "1"));
+  assertEquals(c.toExpression(), "a == '1'");
+});
+
+Deno.test("true && true simplifies to true", () => {
+  assertEquals(raw("true").and(raw("true")).toExpression(), "true");
+});
+
+// --- literal comparison simplification ---
+
+Deno.test("literal equals same value simplifies to true", () => {
+  const v = new ExpressionValue("'linux'");
+  assertEquals(v.equals("linux").toExpression(), "true");
+});
+
+Deno.test("literal equals different value simplifies to false", () => {
+  const v = new ExpressionValue("'linux'");
+  assertEquals(v.equals("windows").toExpression(), "false");
+});
+
+Deno.test("literal notEquals same value simplifies to false", () => {
+  const v = new ExpressionValue("'linux'");
+  assertEquals(v.notEquals("linux").toExpression(), "false");
+});
+
+Deno.test("literal notEquals different value simplifies to true", () => {
+  const v = new ExpressionValue("'linux'");
+  assertEquals(v.notEquals("windows").toExpression(), "true");
+});
+
+Deno.test("number literal equals simplifies", () => {
+  const v = new ExpressionValue("42");
+  assertEquals(v.equals(42).toExpression(), "true");
+  assertEquals(v.equals(99).toExpression(), "false");
+});
+
+Deno.test("non-literal equals does not simplify", () => {
+  const v = new ExpressionValue("matrix.os");
+  assertEquals(v.equals("linux").toExpression(), "matrix.os == 'linux'");
+});

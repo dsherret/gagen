@@ -41,21 +41,21 @@ export class ExpressionValue {
   }
 
   equals(value: string | number | boolean): Condition {
-    return new ComparisonCondition(
-      this.#expression,
-      "==",
-      value,
-      sourcesFrom(this),
-    );
+    const sources = sourcesFrom(this);
+    if (isLiteralExpression(this.#expression)) {
+      const isEqual = this.#expression === formatLiteral(value);
+      return new RawCondition(isEqual ? "true" : "false", sources);
+    }
+    return new ComparisonCondition(this.#expression, "==", value, sources);
   }
 
   notEquals(value: string | number | boolean): Condition {
-    return new ComparisonCondition(
-      this.#expression,
-      "!=",
-      value,
-      sourcesFrom(this),
-    );
+    const sources = sourcesFrom(this);
+    if (isLiteralExpression(this.#expression)) {
+      const isEqual = this.#expression === formatLiteral(value);
+      return new RawCondition(isEqual ? "false" : "true", sources);
+    }
+    return new ComparisonCondition(this.#expression, "!=", value, sources);
   }
 
   startsWith(prefix: string): Condition {
@@ -89,6 +89,15 @@ export class ExpressionValue {
  * `.not()` composition. Tracks all ExpressionSources referenced so that
  * dependencies can be inferred automatically.
  */
+// helpers for construction-time simplification
+function isTrueCondition(c: Condition): boolean {
+  return c instanceof RawCondition && c.toExpression() === "true";
+}
+
+function isFalseCondition(c: Condition): boolean {
+  return c instanceof RawCondition && c.toExpression() === "false";
+}
+
 export abstract class Condition {
   readonly sources: ReadonlySet<ExpressionSource>;
 
@@ -97,15 +106,27 @@ export abstract class Condition {
   }
 
   and(other: Condition | boolean): Condition {
-    if (other === true) return this;
-    if (other === false) return new RawCondition("false", this.sources);
-    return new LogicalCondition("&&", this, other, unionSources(this, other));
+    const right = typeof other === "boolean"
+      ? new RawCondition(String(other), EMPTY_SOURCES)
+      : other;
+    if (isTrueCondition(this)) return right;
+    if (isTrueCondition(right)) return this;
+    if (isFalseCondition(this) || isFalseCondition(right)) {
+      return new RawCondition("false", unionSources(this, right));
+    }
+    return new LogicalCondition("&&", this, right, unionSources(this, right));
   }
 
   or(other: Condition | boolean): Condition {
-    if (other === false) return this;
-    if (other === true) return new RawCondition("true", this.sources);
-    return new LogicalCondition("||", this, other, unionSources(this, other));
+    const right = typeof other === "boolean"
+      ? new RawCondition(String(other), EMPTY_SOURCES)
+      : other;
+    if (isFalseCondition(this)) return right;
+    if (isFalseCondition(right)) return this;
+    if (isTrueCondition(this) || isTrueCondition(right)) {
+      return new RawCondition("true", unionSources(this, right));
+    }
+    return new LogicalCondition("||", this, right, unionSources(this, right));
   }
 
   not(): Condition {
@@ -140,6 +161,11 @@ export abstract class Condition {
   /** returns the flat OR children of this condition as Condition objects */
   flattenOr(): Condition[] {
     return [this];
+  }
+
+  /** returns true if this condition always evaluates to true */
+  isAlwaysTrue(): boolean {
+    return false;
   }
 
   /** render without `${{ }}` wrapping */
@@ -296,6 +322,20 @@ export class RawCondition extends Condition {
     this.#expression = expression;
   }
 
+  override isAlwaysTrue(): boolean {
+    return this.#expression === "true";
+  }
+
+  override not(): Condition {
+    if (this.#expression === "true") {
+      return new RawCondition("false", this.sources);
+    }
+    if (this.#expression === "false") {
+      return new RawCondition("true", this.sources);
+    }
+    return super.not();
+  }
+
   toExpression(): string {
     return this.#expression;
   }
@@ -415,9 +455,35 @@ export const conditions = {
 
 // --- helpers ---
 
+/** Checks if a condition-like value always evaluates to true. */
+export function isAlwaysTrue(
+  c: Condition | ExpressionValue | string,
+): boolean {
+  if (c instanceof Condition) return c.isAlwaysTrue();
+  if (typeof c === "string") return c === "true";
+  return false;
+}
+
+/** Checks if a condition-like value always evaluates to false. */
+export function isAlwaysFalse(
+  c: Condition | ExpressionValue | string,
+): boolean {
+  if (c instanceof Condition) return isFalseCondition(c);
+  if (typeof c === "string") return c === "false";
+  return false;
+}
+
 export function formatLiteral(value: string | number | boolean): string {
   if (typeof value === "string") return `'${value}'`;
   return String(value);
+}
+
+/** checks if an expression string is a literal (quoted string, number, or boolean) */
+function isLiteralExpression(expr: string): boolean {
+  if (expr.startsWith("'") && expr.endsWith("'")) return true;
+  if (expr === "true" || expr === "false") return true;
+  if (expr.length > 0 && String(Number(expr)) === expr) return true;
+  return false;
 }
 
 export function sourcesFrom(
