@@ -487,9 +487,9 @@ import {
 const artifact = defineArtifact("build-output");
 
 const buildStep = step({ name: "Build", run: "make build" });
-const upload = artifact.upload({ path: "dist/", retentionDays: 5 });
+const upload = artifact.upload({ path: "dist/" });
 
-const download = artifact.download({ path: "dist/" });
+const download = artifact.download({ dirPath: "output/" });
 const deployStep = step.dependsOn(download)({
   name: "Deploy",
   run: "make deploy",
@@ -506,10 +506,16 @@ const wf = createWorkflow({
 });
 ```
 
-The artifact version defaults to `v6` but can be configured:
+Upload requires `path` (a glob pattern for files to upload). Download accepts an
+optional `dirPath` (the directory to download into).
+
+The artifact version and default retention days can be configured:
 
 ```ts
-const artifact = defineArtifact("build-output", { version: "v3" });
+const artifact = defineArtifact("build-output", {
+  version: "v3",
+  retentionDays: 5,
+});
 ```
 
 ## Job configuration
