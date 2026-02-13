@@ -2,7 +2,6 @@ export { Step, step, StepRef } from "./step.ts";
 export type {
   ConditionLike,
   ConfigValue,
-  MaybeStepLike,
   StepBuilder,
   StepConfig,
   StepFunction,
