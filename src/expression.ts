@@ -637,6 +637,18 @@ export class ElseIfBuilder {
 
 // --- inline value (serializes as plain value, not ${{ }}) ---
 
+/** Creates an ExpressionValue or Condition from a literal value. */
+export function literal(value: boolean): Condition;
+export function literal(value: string | number): ExpressionValue;
+export function literal(
+  value: string | number | boolean,
+): ExpressionValue | Condition {
+  if (typeof value === "boolean") {
+    return new RawCondition(String(value), EMPTY_SOURCES);
+  }
+  return new InlineValue(value);
+}
+
 class InlineValue extends ExpressionValue {
   readonly #plainValue: string;
 

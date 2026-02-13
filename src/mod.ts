@@ -33,6 +33,7 @@ export {
   ElseIfBuilder,
   expr,
   ExpressionValue,
+  literal,
   ThenBuilder,
 } from "./expression.ts";
 export type {

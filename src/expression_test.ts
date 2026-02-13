@@ -1,12 +1,16 @@
 import { assertEquals } from "@std/assert";
 import {
   ComparisonCondition,
+  Condition,
   conditions,
+  defineExprObj,
+  expr,
   type ExpressionSource,
   ExpressionValue,
   FunctionCallCondition,
   isAlwaysFalse,
   isAlwaysTrue,
+  literal,
   RawCondition,
 } from "./expression.ts";
 
@@ -504,4 +508,95 @@ Deno.test("conditions.isTrue().not() simplifies to false", () => {
 
 Deno.test("conditions.isFalse().not() simplifies to true", () => {
   assertEquals(conditions.isFalse().not().toExpression(), "true");
+});
+
+// --- literal() ---
+
+Deno.test("literal string supports .equals()", () => {
+  assertEquals(literal("linux").equals("linux").toExpression(), "true");
+  assertEquals(literal("linux").equals("windows").toExpression(), "false");
+});
+
+Deno.test("literal string supports .notEquals()", () => {
+  assertEquals(literal("linux").notEquals("linux").toExpression(), "false");
+  assertEquals(literal("linux").notEquals("windows").toExpression(), "true");
+});
+
+Deno.test("literal number supports .equals()", () => {
+  assertEquals(literal(42).equals(42).toExpression(), "true");
+  assertEquals(literal(42).equals(0).toExpression(), "false");
+});
+
+Deno.test("literal boolean true returns always-true condition", () => {
+  const c = literal(true);
+  assertEquals(c instanceof Condition, true);
+  assertEquals(c.toExpression(), "true");
+  assertEquals(c.isAlwaysTrue(), true);
+  assertEquals(c.isAlwaysFalse(), false);
+});
+
+Deno.test("literal boolean false returns always-false condition", () => {
+  const c = literal(false);
+  assertEquals(c instanceof Condition, true);
+  assertEquals(c.toExpression(), "false");
+  assertEquals(c.isAlwaysTrue(), false);
+  assertEquals(c.isAlwaysFalse(), true);
+});
+
+Deno.test("literal string serializes as plain value", () => {
+  assertEquals(literal("ubuntu-latest").toString(), "ubuntu-latest");
+});
+
+Deno.test("literal number serializes as plain value", () => {
+  assertEquals(literal(42).toString(), "42");
+});
+
+// --- defineExprObj ---
+
+Deno.test("defineExprObj: string values become ExpressionValue", () => {
+  const m = defineExprObj({ os: "linux" });
+  assertEquals(m.os instanceof ExpressionValue, true);
+  // serializes inline, not as ${{ }}
+  assertEquals(m.os.toString(), "linux");
+});
+
+Deno.test("defineExprObj: boolean true becomes Condition", () => {
+  const m = defineExprObj({ skip: true });
+  assertEquals(m.skip instanceof Condition, true);
+  assertEquals(m.skip.toExpression(), "true");
+});
+
+Deno.test("defineExprObj: boolean false becomes Condition", () => {
+  const m = defineExprObj({ skip: false });
+  assertEquals(m.skip instanceof Condition, true);
+  assertEquals(m.skip.toExpression(), "false");
+});
+
+Deno.test("defineExprObj: Condition values pass through", () => {
+  const cond = conditions.isBranch("main");
+  const m = defineExprObj({ skip: cond });
+  assertEquals(m.skip, cond);
+});
+
+Deno.test("defineExprObj: ExpressionValue values pass through", () => {
+  const e = expr("matrix.os");
+  const m = defineExprObj({ os: e });
+  assertEquals(m.os, e);
+});
+
+Deno.test("defineExprObj: number values become ExpressionValue", () => {
+  const m = defineExprObj({ count: 42 });
+  assertEquals(m.count instanceof ExpressionValue, true);
+  assertEquals(m.count.toString(), "42");
+});
+
+Deno.test("defineExprObj: .equals() simplifies literal comparisons", () => {
+  const m = defineExprObj({ os: "linux" });
+  // same literal → simplifies to true
+  assertEquals(m.os.equals("linux").toExpression(), "true");
+  // different literal → simplifies to false
+  assertEquals(m.os.equals("windows").toExpression(), "false");
+  // notEquals: same → false, different → true
+  assertEquals(m.os.notEquals("linux").toExpression(), "false");
+  assertEquals(m.os.notEquals("windows").toExpression(), "true");
 });
