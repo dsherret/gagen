@@ -36,6 +36,7 @@ export class Artifact {
       withObj["retention-days"] = retentionDays;
     }
     const s = new Step({
+      name: `Upload artifact ${this.name}`,
       uses: `actions/upload-artifact@${this.#version}`,
       with: withObj,
     });
@@ -52,6 +53,7 @@ export class Artifact {
     }
     return new Step(
       {
+        name: `Download artifact ${this.name}`,
         uses: `actions/download-artifact@${this.#version}`,
         with: withObj,
       },

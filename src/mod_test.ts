@@ -3015,7 +3015,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v6
+      - name: Upload artifact build-output
+        uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -3044,7 +3045,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v6
+      - name: Upload artifact build-output
+        uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -3075,11 +3077,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v6
+      - name: Upload artifact build-output
+        uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
-      - uses: actions/download-artifact@v6
+      - name: Download artifact build-output
+        uses: actions/download-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -3110,7 +3114,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v6
+      - name: Upload artifact build-output
+        uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -3119,7 +3124,8 @@ jobs:
       - build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v6
+      - name: Download artifact build-output
+        uses: actions/download-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -3148,7 +3154,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v3
+      - name: Upload artifact build-output
+        uses: actions/upload-artifact@v3
         with:
           name: build-output
           path: dist/
@@ -3177,7 +3184,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v6
+      - name: Upload artifact build-output
+        uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
@@ -3207,7 +3215,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact@v6
+      - name: Upload artifact build-output
+        uses: actions/upload-artifact@v6
         with:
           name: build-output
           path: dist/
