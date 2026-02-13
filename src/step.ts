@@ -180,7 +180,14 @@ function buildStepFromArgs(...args: unknown[]): Step<string> {
     throw new Error("step() requires at least one argument");
   }
   if (args.length === 1) {
-    return new Step(args[0] as StepConfig);
+    const arg = args[0];
+    if (arg instanceof Step) {
+      return arg;
+    }
+    if (arg instanceof StepRef) {
+      return arg.step;
+    }
+    return new Step(arg as StepConfig);
   }
   const children: StepLike[] = [];
   for (const item of args) {
