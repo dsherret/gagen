@@ -351,6 +351,10 @@ const eventName = expr("github.event_name");
 
 /** Common condition helpers for GitHub Actions workflows. */
 export const conditions = {
+  /** A condition that is always true. Simplifies away in `.and()` / `.or()`. */
+  isTrue: (): Condition => new RawCondition("true", EMPTY_SOURCES),
+  /** A condition that is always false. Simplifies away in `.and()` / `.or()`. */
+  isFalse: (): Condition => new RawCondition("false", EMPTY_SOURCES),
   /** Status check functions for use in step/job `if` fields. */
   status: {
     /** Run regardless of previous step outcome. */
