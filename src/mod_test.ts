@@ -3117,6 +3117,180 @@ jobs:
   );
 });
 
+Deno.test("upload uses path from ArtifactOptions", () => {
+  setup();
+  const artifact = defineArtifact("build-output", { path: "dist/" });
+  const upload = artifact.upload();
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v6
+        with:
+          name: build-output
+          path: dist/
+`,
+  );
+});
+
+Deno.test("upload config path overrides ArtifactOptions path", () => {
+  setup();
+  const artifact = defineArtifact("build-output", { path: "default/" });
+  const upload = artifact.upload({ path: "override/" });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v6
+        with:
+          name: build-output
+          path: override/
+`,
+  );
+});
+
+Deno.test("upload throws when no path is set", () => {
+  setup();
+  const artifact = defineArtifact("build-output");
+  assertThrows(
+    () => artifact.upload(),
+    Error,
+    "upload requires a path",
+  );
+});
+
+Deno.test("upload retentionDays from ArtifactOptions", () => {
+  setup();
+  const artifact = defineArtifact("build-output", {
+    path: "dist/",
+    retentionDays: 7,
+  });
+  const upload = artifact.upload();
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v6
+        with:
+          name: build-output
+          path: dist/
+          retention-days: 7
+`,
+  );
+});
+
+Deno.test("upload config retentionDays overrides ArtifactOptions", () => {
+  setup();
+  const artifact = defineArtifact("build-output", {
+    path: "dist/",
+    retentionDays: 7,
+  });
+  const upload = artifact.upload({ retentionDays: 3 });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v6
+        with:
+          name: build-output
+          path: dist/
+          retention-days: 3
+`,
+  );
+});
+
+Deno.test("download uses path from ArtifactOptions", () => {
+  setup();
+  const artifact = defineArtifact("build-output", { path: "dist/" });
+  const upload = artifact.upload();
+  const download = artifact.download();
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "build", runsOn: "ubuntu-latest", steps: [upload] },
+      { id: "deploy", runsOn: "ubuntu-latest", steps: [download] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v6
+        with:
+          name: build-output
+          path: dist/
+  deploy:
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: build-output
+          path: dist/
+`,
+  );
+});
+
 // --- services ---
 
 Deno.test("single service serializes correctly", () => {

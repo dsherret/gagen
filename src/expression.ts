@@ -89,15 +89,6 @@ export class ExpressionValue {
  * `.not()` composition. Tracks all ExpressionSources referenced so that
  * dependencies can be inferred automatically.
  */
-// helpers for construction-time simplification
-function isTrueCondition(c: Condition): boolean {
-  return c instanceof RawCondition && c.toExpression() === "true";
-}
-
-function isFalseCondition(c: Condition): boolean {
-  return c instanceof RawCondition && c.toExpression() === "false";
-}
-
 export abstract class Condition {
   readonly sources: ReadonlySet<ExpressionSource>;
 
@@ -109,9 +100,9 @@ export abstract class Condition {
     const right = typeof other === "boolean"
       ? new RawCondition(String(other), EMPTY_SOURCES)
       : other;
-    if (isTrueCondition(this)) return right;
-    if (isTrueCondition(right)) return this;
-    if (isFalseCondition(this) || isFalseCondition(right)) {
+    if (this.isAlwaysTrue()) return right;
+    if (right.isAlwaysTrue()) return this;
+    if (this.isAlwaysFalse() || right.isAlwaysFalse()) {
       return new RawCondition("false", unionSources(this, right));
     }
     return new LogicalCondition("&&", this, right, unionSources(this, right));
@@ -121,9 +112,9 @@ export abstract class Condition {
     const right = typeof other === "boolean"
       ? new RawCondition(String(other), EMPTY_SOURCES)
       : other;
-    if (isFalseCondition(this)) return right;
-    if (isFalseCondition(right)) return this;
-    if (isTrueCondition(this) || isTrueCondition(right)) {
+    if (this.isAlwaysFalse()) return right;
+    if (right.isAlwaysFalse()) return this;
+    if (this.isAlwaysTrue() || right.isAlwaysTrue()) {
       return new RawCondition("true", unionSources(this, right));
     }
     return new LogicalCondition("||", this, right, unionSources(this, right));
@@ -165,6 +156,11 @@ export abstract class Condition {
 
   /** returns true if this condition always evaluates to true */
   isAlwaysTrue(): boolean {
+    return false;
+  }
+
+  /** returns true if this condition always evaluates to false */
+  isAlwaysFalse(): boolean {
     return false;
   }
 
@@ -326,6 +322,10 @@ export class RawCondition extends Condition {
     return this.#expression === "true";
   }
 
+  override isAlwaysFalse(): boolean {
+    return this.#expression === "false";
+  }
+
   override not(): Condition {
     if (this.#expression === "true") {
       return new RawCondition("false", this.sources);
@@ -472,7 +472,7 @@ export function isAlwaysTrue(
 export function isAlwaysFalse(
   c: Condition | ExpressionValue | string,
 ): boolean {
-  if (c instanceof Condition) return isFalseCondition(c);
+  if (c instanceof Condition) return c.isAlwaysFalse();
   if (typeof c === "string") return c === "false";
   return false;
 }
