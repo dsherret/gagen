@@ -32,6 +32,7 @@ export function resetStepCounter(): void {
 }
 
 export type StepLike = Step<string> | StepRef<string>;
+export type MaybeStepLike = StepLike | null | undefined;
 
 export class Step<O extends string = never> implements ExpressionSource {
   readonly #id: string;
@@ -42,21 +43,24 @@ export class Step<O extends string = never> implements ExpressionSource {
   readonly children: readonly StepLike[];
 
   constructor(config: StepConfig<O>, crossJobDeps?: Step<string>[]);
-  constructor(children: readonly StepLike[]);
+  constructor(children: readonly MaybeStepLike[]);
   constructor(
-    configOrChildren: StepConfig<O> | readonly StepLike[],
+    configOrChildren: StepConfig<O> | readonly MaybeStepLike[],
     crossJobDeps?: Step<string>[],
   ) {
     if (Array.isArray(configOrChildren)) {
       // composite step (group of children)
-      if (configOrChildren.length === 0) {
+      const children = configOrChildren.filter(
+        (c): c is StepLike => c != null,
+      );
+      if (children.length === 0) {
         throw new Error("step() requires at least one step");
       }
       this.#id = `_step_${stepCounter++}`;
       this.config = {} as StepConfig<O>;
       this._crossJobDeps = Object.freeze([]);
       this.outputs = {} as { [K in O]: ExpressionValue };
-      this.children = Object.freeze([...configOrChildren] as StepLike[]);
+      this.children = Object.freeze(children);
       return;
     }
 
@@ -90,12 +94,16 @@ export class Step<O extends string = never> implements ExpressionSource {
     return this.#id;
   }
 
-  dependsOn(...deps: StepLike[]): StepRef<O> {
-    return new StepRef(this, { dependencies: deps });
+  dependsOn(...deps: MaybeStepLike[]): StepRef<O> {
+    return new StepRef(this, {
+      dependencies: deps.filter((d): d is StepLike => d != null),
+    });
   }
 
-  comesAfter(...deps: StepLike[]): StepRef<O> {
-    return new StepRef(this, { afterDependencies: deps });
+  comesAfter(...deps: MaybeStepLike[]): StepRef<O> {
+    return new StepRef(this, {
+      afterDependencies: deps.filter((d): d is StepLike => d != null),
+    });
   }
 
   if(condition: ConditionLike): StepRef<O> {
@@ -161,11 +169,12 @@ export class Step<O extends string = never> implements ExpressionSource {
 
 export interface StepBuilder {
   <const O extends string = never>(
-    ...args: (StepConfig<O> | Step<string> | StepRef<string>)[]
+    ...args:
+      (StepConfig<O> | Step<string> | StepRef<string> | null | undefined)[]
   ): StepRef<O>;
   if(condition: ConditionLike): StepBuilder;
-  dependsOn(...deps: StepLike[]): StepBuilder;
-  comesAfter(...deps: StepLike[]): StepBuilder;
+  dependsOn(...deps: MaybeStepLike[]): StepBuilder;
+  comesAfter(...deps: MaybeStepLike[]): StepBuilder;
 }
 
 interface StepBuilderInit {
@@ -175,14 +184,15 @@ interface StepBuilderInit {
 }
 
 function buildStepFromArgs(...args: unknown[]): Step<string> {
-  if (args.length === 0) {
+  const filtered = args.filter((a) => a != null);
+  if (filtered.length === 0) {
     throw new Error("step() requires at least one argument");
   }
-  if (args.length === 1) {
-    return new Step(args[0] as StepConfig);
+  if (filtered.length === 1) {
+    return new Step(filtered[0] as StepConfig);
   }
   const children: StepLike[] = [];
-  for (const item of args) {
+  for (const item of filtered) {
     if (item instanceof Step || item instanceof StepRef) {
       children.push(item);
     } else {
@@ -222,17 +232,23 @@ function createStepBuilder(init: StepBuilderInit): StepBuilder {
     });
   };
 
-  builder.dependsOn = (...deps: StepLike[]): StepBuilder => {
+  builder.dependsOn = (...deps: MaybeStepLike[]): StepBuilder => {
     return createStepBuilder({
       ...init,
-      dependencies: [...(init.dependencies ?? []), ...deps],
+      dependencies: [
+        ...(init.dependencies ?? []),
+        ...deps.filter((d): d is StepLike => d != null),
+      ],
     });
   };
 
-  builder.comesAfter = (...deps: StepLike[]): StepBuilder => {
+  builder.comesAfter = (...deps: MaybeStepLike[]): StepBuilder => {
     return createStepBuilder({
       ...init,
-      afterDependencies: [...(init.afterDependencies ?? []), ...deps],
+      afterDependencies: [
+        ...(init.afterDependencies ?? []),
+        ...deps.filter((d): d is StepLike => d != null),
+      ],
     });
   };
 
@@ -243,11 +259,12 @@ function createStepBuilder(init: StepBuilderInit): StepBuilder {
 
 export interface StepFunction {
   <const O extends string = never>(
-    ...args: (StepConfig<O> | Step<string> | StepRef<string>)[]
+    ...args:
+      (StepConfig<O> | Step<string> | StepRef<string> | null | undefined)[]
   ): Step<O>;
   if(condition: ConditionLike): StepBuilder;
-  dependsOn(...deps: StepLike[]): StepBuilder;
-  comesAfter(...deps: StepLike[]): StepBuilder;
+  dependsOn(...deps: MaybeStepLike[]): StepBuilder;
+  comesAfter(...deps: MaybeStepLike[]): StepBuilder;
 }
 
 export const step: StepFunction = Object.assign(
@@ -255,10 +272,14 @@ export const step: StepFunction = Object.assign(
   {
     if: (condition: ConditionLike): StepBuilder =>
       createStepBuilder({ condition }),
-    dependsOn: (...deps: StepLike[]): StepBuilder =>
-      createStepBuilder({ dependencies: deps }),
-    comesAfter: (...deps: StepLike[]): StepBuilder =>
-      createStepBuilder({ afterDependencies: deps }),
+    dependsOn: (...deps: MaybeStepLike[]): StepBuilder =>
+      createStepBuilder({
+        dependencies: deps.filter((d): d is StepLike => d != null),
+      }),
+    comesAfter: (...deps: MaybeStepLike[]): StepBuilder =>
+      createStepBuilder({
+        afterDependencies: deps.filter((d): d is StepLike => d != null),
+      }),
   },
 );
 
@@ -296,19 +317,25 @@ export class StepRef<O extends string = never> {
     return this.step.outputs;
   }
 
-  dependsOn(...deps: StepLike[]): StepRef<O> {
+  dependsOn(...deps: MaybeStepLike[]): StepRef<O> {
     return new StepRef(this.step, {
       condition: this.condition,
-      dependencies: [...this.dependencies, ...deps],
+      dependencies: [
+        ...this.dependencies,
+        ...deps.filter((d): d is StepLike => d != null),
+      ],
       afterDependencies: this.afterDependencies,
     });
   }
 
-  comesAfter(...deps: StepLike[]): StepRef<O> {
+  comesAfter(...deps: MaybeStepLike[]): StepRef<O> {
     return new StepRef(this.step, {
       condition: this.condition,
       dependencies: this.dependencies,
-      afterDependencies: [...this.afterDependencies, ...deps],
+      afterDependencies: [
+        ...this.afterDependencies,
+        ...deps.filter((d): d is StepLike => d != null),
+      ],
     });
   }
 
