@@ -10,7 +10,6 @@ import type { Permissions } from "./permissions.ts";
 import {
   type ConditionLike,
   type ConfigValue,
-  type MaybeStepLike,
   serializeConditionLike,
   serializeConfigValues,
   Step,
@@ -64,7 +63,7 @@ export type JobConfig = StepsJobConfig | ReusableJobConfig;
 
 export interface StepsJobDef extends StepsJobConfig {
   id?: string;
-  steps: MaybeStepLike | MaybeStepLike[];
+  steps: StepLike | StepLike[];
   outputs?: Record<string, ExpressionValue>;
 }
 
@@ -1247,9 +1246,7 @@ export function job(id: string, config: JobDef): Job {
   }
   const { id: _id, steps, outputs, ...jobConfig } = config;
   return new Job(id, jobConfig, {
-    steps: (Array.isArray(steps) ? steps : [steps]).filter(
-      (s): s is StepLike => s != null,
-    ),
+    steps: Array.isArray(steps) ? steps : [steps],
     outputs,
   });
 }
