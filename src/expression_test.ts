@@ -551,6 +551,62 @@ Deno.test("literal number serializes as plain value", () => {
   assertEquals(literal(42).toString(), "42");
 });
 
+// --- and/or deduplication ---
+
+Deno.test("and deduplicates identical terms", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  // (a && b).and(b) should not repeat b
+  assertEquals(a.and(b).and(b).toExpression(), "a == '1' && b == '2'");
+});
+
+Deno.test("and deduplicates when both sides share a term", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  const c = cmp("c", "3");
+  // (a && b).and(b && c) → a && b && c
+  assertEquals(
+    a.and(b).and(b.and(c)).toExpression(),
+    "a == '1' && b == '2' && c == '3'",
+  );
+});
+
+Deno.test("or deduplicates identical terms", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  // (a || b).or(b) should not repeat b
+  assertEquals(a.or(b).or(b).toExpression(), "a == '1' || b == '2'");
+});
+
+Deno.test("or deduplicates when both sides share a term", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  const c = cmp("c", "3");
+  // (a || b).or(b || c) → a || b || c
+  assertEquals(
+    a.or(b).or(b.or(c)).toExpression(),
+    "a == '1' || b == '2' || c == '3'",
+  );
+});
+
+Deno.test("and returns left when right is fully duplicate", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  const combined = a.and(b);
+  // combining with a subset should return the existing condition
+  assertEquals(combined.and(a).toExpression(), "a == '1' && b == '2'");
+});
+
+Deno.test("deduplication works with function call conditions", () => {
+  const isTag = fn("startsWith", ["github.ref", "'refs/tags/'"]);
+  const isMain = cmp("github.ref", "refs/heads/main");
+  // isTag.not().and(isMain.not()).and(isTag.not()) should not repeat isTag.not()
+  assertEquals(
+    isTag.not().and(isMain.not()).and(isTag.not()).toExpression(),
+    "!startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main'",
+  );
+});
+
 // --- defineExprObj ---
 
 Deno.test("defineExprObj: string values become ExpressionValue", () => {

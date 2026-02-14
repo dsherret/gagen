@@ -4484,6 +4484,78 @@ jobs:
   );
 });
 
+// --- step builder wrapping single StepRef preserves condition/deps ---
+
+Deno.test("step.if() wrapping a single StepRef preserves its condition", () => {
+  setup();
+  const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
+  const isNotTag = isTag().not();
+  const isNotMain = isBranch("main").not();
+
+  // create a composite with .if(), then wrap it in step.dependsOn()
+  // the outer builder receives a single StepRef — its condition must not be lost
+  const cacheSteps = step.if(isNotMain.and(isNotTag))(
+    { name: "Restore cache", uses: "actions/cache/restore@v4" },
+    { name: "Apply mtime", run: "mtime-cache" },
+  );
+  const build = step.dependsOn(checkout, cacheSteps)({
+    name: "Build",
+    run: "cargo build",
+  });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [build],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  // the cache steps should have the isNotMain && isNotTag condition
+  const parsed = parse(yaml) as Record<string, unknown>;
+  const steps = (parsed as { jobs: { j: { steps: unknown[] } } }).jobs.j.steps;
+  const restoreCache = (steps as Record<string, string>[]).find(
+    (s) => s.name === "Restore cache",
+  );
+  assertEquals(
+    restoreCache?.if,
+    "github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')",
+  );
+});
+
+Deno.test("step.dependsOn() wrapping a single StepRef preserves its dependencies", () => {
+  setup();
+  const a = step({ name: "A", run: "a" });
+  const b = step({ name: "B", run: "b" }).dependsOn(a);
+  const c = step({ name: "C", run: "c" });
+
+  // wrap b (which already depends on a) inside step.dependsOn(c)
+  // b's dependency on a must be preserved
+  const wrapped = step.dependsOn(c)(b);
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [wrapped],
+    }],
+  });
+
+  const yaml = wf.toYamlString();
+  const lines = yaml.split("\n");
+  const aIdx = lines.findIndex((l) => l.includes("name: A"));
+  const bIdx = lines.findIndex((l) => l.includes("name: B"));
+  const cIdx = lines.findIndex((l) => l.includes("name: C"));
+  // a and c should both appear before b
+  assertEquals(aIdx < bIdx, true);
+  assertEquals(cIdx < bIdx, true);
+});
+
 // --- defineExprObj ---
 
 Deno.test("defineExprObj: string values serialize inline in YAML", () => {

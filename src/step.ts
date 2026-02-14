@@ -185,7 +185,9 @@ function buildStepFromArgs(...args: unknown[]): Step<string> {
       return arg;
     }
     if (arg instanceof StepRef) {
-      return arg.step;
+      // wrap in a composite so flattenStepLike will see the StepRef's
+      // condition/deps/afterDeps (unwrapping to arg.step would discard them)
+      return new Step([arg]);
     }
     return new Step(arg as StepConfig);
   }
