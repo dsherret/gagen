@@ -537,8 +537,17 @@ function deduplicatedLogical(
   const unique = rightTerms.filter((t) => !seen.has(t.toExpression()));
   if (unique.length === 0) return left;
   const allTerms = [...leftTerms, ...unique];
+  // absorption: for &&, drop any OR compound whose child appears as a sibling
+  // term (e.g. (A || B) && B → B). Symmetrically for ||.
+  const termExprs = new Set(allTerms.map((t) => t.toExpression()));
+  const absorbed = allTerms.filter((term) => {
+    const children = op === "&&" ? term.flattenOr() : term.flattenAnd();
+    if (children.length <= 1) return true;
+    return !children.some((c) => termExprs.has(c.toExpression()));
+  });
+  const terms = absorbed.length > 0 ? absorbed : allTerms;
   const sources = unionSources(...allTerms);
-  return allTerms.reduce((acc, term) =>
+  return terms.reduce((acc, term) =>
     new LogicalCondition(op, acc, term, sources)
   );
 }

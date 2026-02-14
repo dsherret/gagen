@@ -607,6 +607,59 @@ Deno.test("deduplication works with function call conditions", () => {
   );
 });
 
+// --- and/or absorption ---
+
+Deno.test("and absorbs or containing a sibling term: (A || B) && B → B", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  assertEquals(a.or(b).and(b).toExpression(), "b == '2'");
+});
+
+Deno.test("and absorbs or on right: B && (A || B) → B", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  assertEquals(b.and(a.or(b)).toExpression(), "b == '2'");
+});
+
+Deno.test("and absorbs or with extra terms: (A || B) && B && C → B && C", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  const c = cmp("c", "3");
+  assertEquals(a.or(b).and(b).and(c).toExpression(), "b == '2' && c == '3'");
+});
+
+Deno.test("and absorbs multiple or terms: (A || B) && (C || B) && B → B", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  const c = cmp("c", "3");
+  assertEquals(
+    a.or(b).and(c.or(b)).and(b).toExpression(),
+    "b == '2'",
+  );
+});
+
+Deno.test("or absorbs and containing a sibling term: (A && B) || B → B", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  assertEquals(a.and(b).or(b).toExpression(), "b == '2'");
+});
+
+Deno.test("or absorbs and on right: B || (A && B) → B", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  assertEquals(b.or(a.and(b)).toExpression(), "b == '2'");
+});
+
+Deno.test("and does not absorb when no overlap", () => {
+  const a = cmp("a", "1");
+  const b = cmp("b", "2");
+  const c = cmp("c", "3");
+  assertEquals(
+    a.or(b).and(c).toExpression(),
+    "(a == '1' || b == '2') && c == '3'",
+  );
+});
+
 // --- defineExprObj ---
 
 Deno.test("defineExprObj: string values become ExpressionValue", () => {
