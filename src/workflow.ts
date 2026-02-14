@@ -51,10 +51,12 @@ export interface WorkflowTriggers {
 
 export interface WorkflowConfig {
   name: string;
+  runName?: string;
   on: WorkflowTriggers;
   permissions?: Permissions;
   concurrency?: { group: string; cancelInProgress?: boolean | string };
   env?: Record<string, ConfigValue>;
+  defaults?: { run?: { shell?: string; workingDirectory?: string } };
   jobs?: (JobDef | Job)[];
 }
 
@@ -88,6 +90,10 @@ export class Workflow {
 
     obj.name = this.#config.name;
 
+    if (this.#config.runName != null) {
+      obj["run-name"] = this.#config.runName;
+    }
+
     obj.on = serializeTriggers(this.#config.on);
 
     if (this.#config.permissions != null) {
@@ -110,6 +116,21 @@ export class Workflow {
         env[key] = value instanceof ExpressionValue ? value.toString() : value;
       }
       obj.env = env;
+    }
+
+    if (this.#config.defaults != null) {
+      const d: Record<string, unknown> = {};
+      if (this.#config.defaults.run) {
+        const run: Record<string, unknown> = {};
+        if (this.#config.defaults.run.shell != null) {
+          run.shell = this.#config.defaults.run.shell;
+        }
+        if (this.#config.defaults.run.workingDirectory != null) {
+          run["working-directory"] = this.#config.defaults.run.workingDirectory;
+        }
+        d.run = run;
+      }
+      obj.defaults = d;
     }
 
     // pre-resolve all jobs and build step→job mapping for cross-job deps

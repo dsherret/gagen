@@ -25,6 +25,7 @@ interface CommonJobFields {
   if?: ConditionLike;
   permissions?: Permissions;
   concurrency?: { group: string; cancelInProgress?: boolean | string };
+  continueOnError?: boolean | string;
 }
 
 export interface ServiceContainer {
@@ -547,6 +548,10 @@ export class Job implements ExpressionSource {
           : serializeConfigValues(config.secrets);
       }
 
+      if (config.continueOnError != null) {
+        result["continue-on-error"] = config.continueOnError;
+      }
+
       return result;
     }
 
@@ -581,6 +586,10 @@ export class Job implements ExpressionSource {
 
     if (config.timeoutMinutes != null) {
       result["timeout-minutes"] = config.timeoutMinutes;
+    }
+
+    if (config.continueOnError != null) {
+      result["continue-on-error"] = config.continueOnError;
     }
 
     if (config.defaults != null) {
