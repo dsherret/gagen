@@ -3537,6 +3537,131 @@ jobs:
   );
 });
 
+// --- workflow run-name ---
+
+Deno.test("workflow run-name serializes correctly", () => {
+  setup();
+  const s = step({ name: "Deploy", run: "echo deploy" });
+
+  const wf = createWorkflow({
+    name: "deploy",
+    runName: "Deploy to ${{ github.event.inputs.environment }}",
+    on: { workflow_dispatch: {} },
+    jobs: [
+      { id: "deploy", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: deploy
+run-name: 'Deploy to \${{ github.event.inputs.environment }}'
+on:
+  workflow_dispatch: {}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        run: echo deploy
+`,
+  );
+});
+
+// --- workflow-level defaults ---
+
+Deno.test("workflow defaults serializes correctly", () => {
+  setup();
+  const s = step({ name: "Test", run: "npm test" });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    defaults: { run: { shell: "bash", workingDirectory: "./api" } },
+    jobs: [
+      { id: "test", runsOn: "ubuntu-latest", steps: [s] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+defaults:
+  run:
+    shell: bash
+    working-directory: ./api
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: npm test
+`,
+  );
+});
+
+// --- job-level continue-on-error ---
+
+Deno.test("steps job continue-on-error serializes correctly", () => {
+  setup();
+  const s = step({ name: "Test", run: "npm test" });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "test",
+        runsOn: "ubuntu-latest",
+        continueOnError: true,
+        steps: [s],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Test
+        run: npm test
+`,
+  );
+});
+
+Deno.test("reusable job continue-on-error serializes correctly", () => {
+  setup();
+
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [
+      {
+        id: "lint",
+        uses: "org/repo/.github/workflows/lint.yml@main",
+        continueOnError: true,
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on: {}
+jobs:
+  lint:
+    uses: org/repo/.github/workflows/lint.yml@main
+    continue-on-error: true
+`,
+  );
+});
+
 // --- job() function and jobs config ---
 
 Deno.test("jobs config with plain object", () => {
