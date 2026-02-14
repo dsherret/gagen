@@ -218,7 +218,6 @@ function createStepBuilder(init: StepBuilderInit): StepBuilder {
     // computeEffectiveConditions (for the step itself) and
     // propagatableConfigIf (for dependency context propagation).
     // Merging it here would cause it to be counted twice.
-    //
     return new StepRef(s, {
       condition: init.condition,
       dependencies: init.dependencies ?? [],
