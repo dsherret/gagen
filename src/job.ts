@@ -51,6 +51,7 @@ export interface StepsJobConfig extends CommonJobFields {
     | string
     | ExpressionValue;
   services?: Record<string, ServiceContainer>;
+  container?: ServiceContainer | string;
 }
 
 export interface ReusableJobConfig extends CommonJobFields {
@@ -553,6 +554,12 @@ export class Job implements ExpressionSource {
     result["runs-on"] = config.runsOn instanceof ExpressionValue
       ? config.runsOn.toString()
       : config.runsOn;
+
+    if (config.container != null) {
+      result.container = typeof config.container === "string"
+        ? config.container
+        : serializeService(config.container);
+    }
 
     if (config.permissions != null) {
       result.permissions = config.permissions;

@@ -3415,6 +3415,128 @@ jobs:
   );
 });
 
+// --- container ---
+
+Deno.test("container as string serializes correctly", () => {
+  setup();
+  const s = step({ name: "Test", run: "npm test" });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "test",
+        runsOn: "ubuntu-latest",
+        container: "node:18",
+        steps: [s],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: 'node:18'
+    steps:
+      - name: Test
+        run: npm test
+`,
+  );
+});
+
+Deno.test("container with full config serializes correctly", () => {
+  setup();
+  const s = step({ name: "Test", run: "npm test" });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "test",
+        runsOn: "ubuntu-latest",
+        container: {
+          image: "node:18",
+          env: { NODE_ENV: "development" },
+          ports: ["80"],
+          volumes: ["my_docker_volume:/volume_mount"],
+          options: "--cpus 1",
+        },
+        steps: [s],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: 'node:18'
+      env:
+        NODE_ENV: development
+      ports:
+        - '80'
+      volumes:
+        - 'my_docker_volume:/volume_mount'
+      options: '--cpus 1'
+    steps:
+      - name: Test
+        run: npm test
+`,
+  );
+});
+
+Deno.test("container with credentials using ExpressionValue", () => {
+  setup();
+  const s = step({ name: "Test", run: "npm test" });
+
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "test",
+        runsOn: "ubuntu-latest",
+        container: {
+          image: "ghcr.io/org/image:latest",
+          credentials: {
+            username: "user",
+            password: expr("secrets.GITHUB_TOKEN"),
+          },
+        },
+        steps: [s],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: 'ghcr.io/org/image:latest'
+      credentials:
+        username: user
+        password: '\${{ secrets.GITHUB_TOKEN }}'
+    steps:
+      - name: Test
+        run: npm test
+`,
+  );
+});
+
 // --- job() function and jobs config ---
 
 Deno.test("jobs config with plain object", () => {
