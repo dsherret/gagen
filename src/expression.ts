@@ -105,7 +105,7 @@ export abstract class Condition {
     if (this.isAlwaysFalse() || right.isAlwaysFalse()) {
       return new RawCondition("false", unionSources(this, right));
     }
-    return new LogicalCondition("&&", this, right, unionSources(this, right));
+    return deduplicatedLogical("&&", this, right);
   }
 
   or(other: Condition | boolean): Condition {
@@ -117,7 +117,7 @@ export abstract class Condition {
     if (this.isAlwaysTrue() || right.isAlwaysTrue()) {
       return new RawCondition("true", unionSources(this, right));
     }
-    return new LogicalCondition("||", this, right, unionSources(this, right));
+    return deduplicatedLogical("||", this, right);
   }
 
   not(): Condition {
@@ -519,6 +519,28 @@ function unionSources(
     for (const s of c.sources) set.add(s);
   }
   return set;
+}
+
+/**
+ * Builds a logical condition (&&/||), deduplicating terms that appear on both
+ * sides. For example, `(A && B).and(B && C)` produces `A && B && C` instead
+ * of `A && B && B && C`.
+ */
+function deduplicatedLogical(
+  op: "&&" | "||",
+  left: Condition,
+  right: Condition,
+): Condition {
+  const leftTerms = op === "&&" ? left.flattenAnd() : left.flattenOr();
+  const rightTerms = op === "&&" ? right.flattenAnd() : right.flattenOr();
+  const seen = new Set(leftTerms.map((t) => t.toExpression()));
+  const unique = rightTerms.filter((t) => !seen.has(t.toExpression()));
+  if (unique.length === 0) return left;
+  const allTerms = [...leftTerms, ...unique];
+  const sources = unionSources(...allTerms);
+  return allTerms.reduce((acc, term) =>
+    new LogicalCondition(op, acc, term, sources)
+  );
 }
 
 // --- ternary expression builders ---

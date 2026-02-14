@@ -185,7 +185,9 @@ function buildStepFromArgs(...args: unknown[]): Step<string> {
       return arg;
     }
     if (arg instanceof StepRef) {
-      return arg.step;
+      // wrap in a composite so flattenStepLike will see the StepRef's
+      // condition/deps/afterDeps (unwrapping to arg.step would discard them)
+      return new Step([arg]);
     }
     return new Step(arg as StepConfig);
   }
@@ -216,6 +218,7 @@ function createStepBuilder(init: StepBuilderInit): StepBuilder {
     // computeEffectiveConditions (for the step itself) and
     // propagatableConfigIf (for dependency context propagation).
     // Merging it here would cause it to be counted twice.
+    //
     return new StepRef(s, {
       condition: init.condition,
       dependencies: init.dependencies ?? [],
