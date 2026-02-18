@@ -1,6 +1,7 @@
 import { assertEquals } from "@std/assert";
 import {
   ComparisonCondition,
+  concat,
   Condition,
   conditions,
   defineExprObj,
@@ -708,4 +709,135 @@ Deno.test("defineExprObj: .equals() simplifies literal comparisons", () => {
   // notEquals: same → false, different → true
   assertEquals(m.os.notEquals("linux").toExpression(), "false");
   assertEquals(m.os.notEquals("windows").toExpression(), "true");
+});
+
+// --- concat ---
+
+Deno.test("concat string + expression", () => {
+  const v = concat("build-", expr("matrix.os"));
+  assertEquals(v.toString(), "build-${{ matrix.os }}");
+  assertEquals(v.expression, "format('build-{0}', matrix.os)");
+});
+
+Deno.test("concat expression + string", () => {
+  const v = concat(expr("matrix.os"), "-latest");
+  assertEquals(v.toString(), "${{ matrix.os }}-latest");
+  assertEquals(v.expression, "format('{0}-latest', matrix.os)");
+});
+
+Deno.test("concat multiple expressions with strings", () => {
+  const v = concat("build-", expr("matrix.os"), "-", expr("matrix.arch"));
+  assertEquals(v.toString(), "build-${{ matrix.os }}-${{ matrix.arch }}");
+  assertEquals(
+    v.expression,
+    "format('build-{0}-{1}', matrix.os, matrix.arch)",
+  );
+});
+
+Deno.test("concat with no args returns empty inline value", () => {
+  const v = concat();
+  assertEquals(v.toString(), "");
+});
+
+Deno.test("concat with single string returns inline value", () => {
+  const v = concat("hello");
+  assertEquals(v.toString(), "hello");
+});
+
+Deno.test("concat with single expression returns it as-is", () => {
+  const e = expr("matrix.os");
+  const v = concat(e);
+  assertEquals(v, e);
+});
+
+Deno.test("concat merges adjacent strings", () => {
+  const v = concat("hello", " ", "world", expr("x"));
+  assertEquals(v.toString(), "hello world${{ x }}");
+  assertEquals(v.expression, "format('hello world{0}', x)");
+});
+
+Deno.test("concat all strings returns inline value", () => {
+  const v = concat("hello", " ", "world");
+  assertEquals(v.toString(), "hello world");
+});
+
+Deno.test("concat with numbers", () => {
+  const v = concat("port-", 8080);
+  assertEquals(v.toString(), "port-8080");
+});
+
+Deno.test("concat with number and expression", () => {
+  const v = concat("v", 1, "-", expr("matrix.os"));
+  assertEquals(v.toString(), "v1-${{ matrix.os }}");
+  assertEquals(v.expression, "format('v1-{0}', matrix.os)");
+});
+
+Deno.test("concat escapes single quotes in format template", () => {
+  const v = concat("it's-", expr("matrix.os"));
+  assertEquals(v.expression, "format('it''s-{0}', matrix.os)");
+  assertEquals(v.toString(), "it's-${{ matrix.os }}");
+});
+
+Deno.test("concat escapes braces in format template", () => {
+  const v = concat("{prefix}-", expr("matrix.os"));
+  assertEquals(v.expression, "format('{{prefix}}-{0}', matrix.os)");
+  assertEquals(v.toString(), "{prefix}-${{ matrix.os }}");
+});
+
+Deno.test("concat tracks sources from all expressions", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const v1 = new ExpressionValue("steps.a.outputs.x", s1);
+  const v2 = new ExpressionValue("steps.b.outputs.y", s2);
+  const v = concat("prefix-", v1, "-", v2);
+  assertEquals(v.allSources.size, 2);
+  assertEquals(v.allSources.has(s1), true);
+  assertEquals(v.allSources.has(s2), true);
+});
+
+Deno.test("concat result works with .equals()", () => {
+  const v = concat("refs/heads/", expr("matrix.branch"));
+  assertEquals(
+    v.equals("refs/heads/main").toExpression(),
+    "format('refs/heads/{0}', matrix.branch) == 'refs/heads/main'",
+  );
+});
+
+Deno.test("concat result works with .startsWith()", () => {
+  const v = concat("prefix-", expr("matrix.os"));
+  assertEquals(
+    v.startsWith("prefix-linux").toExpression(),
+    "startsWith(format('prefix-{0}', matrix.os), 'prefix-linux')",
+  );
+});
+
+Deno.test("concat flattens nested concats", () => {
+  const inner = concat("a-", expr("x"));
+  const outer = concat(inner, "-b-", expr("y"));
+  assertEquals(outer.toString(), "a-${{ x }}-b-${{ y }}");
+  assertEquals(outer.expression, "format('a-{0}-b-{1}', x, y)");
+});
+
+Deno.test("concat flattens and merges adjacent strings across nesting", () => {
+  const inner = concat(expr("x"), "-suffix");
+  const outer = concat("prefix-", inner);
+  assertEquals(outer.toString(), "prefix-${{ x }}-suffix");
+  assertEquals(outer.expression, "format('prefix-{0}-suffix', x)");
+});
+
+Deno.test("concat with literal() expression", () => {
+  const v = concat("prefix-", literal("foo"), "-suffix");
+  assertEquals(v.toString(), "prefix-foo-suffix");
+});
+
+Deno.test("ExpressionValue.concat() method", () => {
+  const v = expr("matrix.os").concat("-latest");
+  assertEquals(v.toString(), "${{ matrix.os }}-latest");
+  assertEquals(v.expression, "format('{0}-latest', matrix.os)");
+});
+
+Deno.test("ExpressionValue.concat() with multiple parts", () => {
+  const v = literal("a-").concat(expr("matrix.os"), "-b");
+  assertEquals(v.toString(), "a-${{ matrix.os }}-b");
+  assertEquals(v.expression, "format('a-{0}-b', matrix.os)");
 });
