@@ -78,6 +78,11 @@ export class ExpressionValue {
     return new RawCondition(`!(${this.#expression})`, sourcesFrom(this));
   }
 
+  /** concatenate this value with additional strings, numbers, or expressions */
+  concat(...parts: ConcatPart[]): ExpressionValue {
+    return concat(this, ...parts);
+  }
+
   /** wrap in `${{ }}` for use in YAML */
   toString(): string {
     return `\${{ ${this.#expression} }}`;
@@ -663,6 +668,119 @@ export class ElseIfBuilder {
       [...this.#branches, { condition: this.#condition, value }],
       this.#sources,
     );
+  }
+}
+
+// --- string concatenation ---
+
+/** a part of a concatenation: plain string, number, or expression */
+export type ConcatPart = string | number | ExpressionValue;
+
+/**
+ * Concatenates strings, numbers, and expressions into a single value.
+ * Expression parts are wrapped in `${{ }}` when serialized for YAML,
+ * and use the `format()` function when used inside expression contexts.
+ *
+ * ```ts
+ * const name = concat("build-", expr("matrix.os"));
+ * name.toString()  // => "build-${{ matrix.os }}"
+ * name.expression  // => "format('build-{0}', matrix.os)"
+ *
+ * const full = concat("build-", expr("matrix.os"), "-", expr("matrix.arch"));
+ * full.toString()  // => "build-${{ matrix.os }}-${{ matrix.arch }}"
+ * ```
+ */
+export function concat(...parts: ConcatPart[]): ExpressionValue {
+  if (parts.length === 0) {
+    return new InlineValue("");
+  }
+  if (parts.length === 1) {
+    const p = parts[0];
+    if (p instanceof ExpressionValue) return p;
+    return new InlineValue(String(p));
+  }
+
+  // flatten nested ConcatValues, inline literals, and convert numbers to strings
+  const flat: (string | ExpressionValue)[] = [];
+  for (const part of parts) {
+    if (part instanceof ConcatValue) {
+      flat.push(...part.concatParts);
+    } else if (part instanceof InlineValue) {
+      flat.push(part.toString());
+    } else if (typeof part === "number") {
+      flat.push(String(part));
+    } else {
+      flat.push(part);
+    }
+  }
+
+  // merge adjacent string parts
+  const merged: (string | ExpressionValue)[] = [];
+  for (const part of flat) {
+    const last = merged.length > 0 ? merged[merged.length - 1] : undefined;
+    if (typeof part === "string" && typeof last === "string") {
+      merged[merged.length - 1] = last + part;
+    } else {
+      merged.push(part);
+    }
+  }
+
+  // degenerate cases after merging
+  if (merged.length === 1) {
+    const p = merged[0];
+    if (typeof p === "string") return new InlineValue(p);
+    return p;
+  }
+
+  // collect sources from all expression parts
+  const sources = new Set<ExpressionSource>();
+  for (const part of merged) {
+    if (part instanceof ExpressionValue) {
+      for (const s of part.allSources) sources.add(s);
+    }
+  }
+
+  // build format() expression for use inside ${{ }} contexts
+  const templateParts: string[] = [];
+  const args: string[] = [];
+  let argIndex = 0;
+  for (const part of merged) {
+    if (part instanceof ExpressionValue) {
+      templateParts.push(`{${argIndex++}}`);
+      args.push(part.expression);
+    } else {
+      // escape single quotes and braces for GitHub Actions format()
+      templateParts.push(
+        part.replace(/'/g, "''").replace(/\{/g, "{{").replace(/\}/g, "}}"),
+      );
+    }
+  }
+  const formatExpr = `format('${templateParts.join("")}', ${args.join(", ")})`;
+
+  return new ConcatValue(formatExpr, merged, sources);
+}
+
+class ConcatValue extends ExpressionValue {
+  readonly #parts: readonly (string | ExpressionValue)[];
+
+  constructor(
+    formatExpr: string,
+    parts: (string | ExpressionValue)[],
+    sources: ReadonlySet<ExpressionSource>,
+  ) {
+    super(formatExpr, sources);
+    this.#parts = Object.freeze([...parts]);
+  }
+
+  /** the individual parts of this concatenation (for flattening nested concats) */
+  get concatParts(): readonly (string | ExpressionValue)[] {
+    return this.#parts;
+  }
+
+  override toString(): string {
+    return this.#parts
+      .map((p) => (p instanceof ExpressionValue ? p.toString() : p))
+      .join("");
   }
 }
 

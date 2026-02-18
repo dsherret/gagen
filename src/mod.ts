@@ -27,6 +27,7 @@ export type {
   WorkflowTriggers,
 } from "./workflow.ts";
 export {
+  concat,
   Condition,
   conditions,
   defineExprObj,
@@ -37,6 +38,7 @@ export {
   ThenBuilder,
 } from "./expression.ts";
 export type {
+  ConcatPart,
   ExpressionSource,
   ExprMap,
   ExprOf,
