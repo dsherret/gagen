@@ -83,6 +83,80 @@ export class ExpressionValue {
     return concat(this, ...parts);
   }
 
+  /** add this value with additional numbers or expressions */
+  add(...parts: AddPart[]): ExpressionValue {
+    return add(this, ...parts);
+  }
+
+  /** subtract a number or expression from this value */
+  subtract(right: AddPart): ExpressionValue {
+    return subtract(this, right);
+  }
+
+  /** multiply this value with additional numbers or expressions */
+  multiply(...parts: AddPart[]): ExpressionValue {
+    return multiply(this, ...parts);
+  }
+
+  /** divide this value by a number or expression */
+  divide(right: AddPart): ExpressionValue {
+    return divide(this, right);
+  }
+
+  /** compute the remainder of this value divided by a number or expression */
+  modulo(right: AddPart): ExpressionValue {
+    return modulo(this, right);
+  }
+
+  endsWith(suffix: string): Condition {
+    return new FunctionCallCondition(
+      "endsWith",
+      [this.#expression, formatLiteral(suffix)],
+      sourcesFrom(this),
+    );
+  }
+
+  greaterThan(value: number): Condition {
+    return new ComparisonCondition(
+      this.#expression,
+      ">",
+      value,
+      sourcesFrom(this),
+    );
+  }
+
+  greaterThanOrEqual(value: number): Condition {
+    return new ComparisonCondition(
+      this.#expression,
+      ">=",
+      value,
+      sourcesFrom(this),
+    );
+  }
+
+  lessThan(value: number): Condition {
+    return new ComparisonCondition(
+      this.#expression,
+      "<",
+      value,
+      sourcesFrom(this),
+    );
+  }
+
+  lessThanOrEqual(value: number): Condition {
+    return new ComparisonCondition(
+      this.#expression,
+      "<=",
+      value,
+      sourcesFrom(this),
+    );
+  }
+
+  /** serialize this value as JSON */
+  toJSON(): ExpressionValue {
+    return toJSON(this);
+  }
+
   /** wrap in `${{ }}` for use in YAML */
   toString(): string {
     return `\${{ ${this.#expression} }}`;
@@ -185,15 +259,27 @@ export abstract class Condition {
 
 // --- concrete condition types ---
 
-/** `left == right` or `left != right` */
+/** comparison operators supported in GitHub Actions expressions */
+export type ComparisonOp = "==" | "!=" | ">" | ">=" | "<" | "<=";
+
+const NEGATED_OP: Record<ComparisonOp, ComparisonOp> = {
+  "==": "!=",
+  "!=": "==",
+  ">": "<=",
+  ">=": "<",
+  "<": ">=",
+  "<=": ">",
+};
+
+/** `left op right` where op is ==, !=, >, >=, <, or <= */
 export class ComparisonCondition extends Condition {
   readonly #left: string;
-  readonly #op: "==" | "!=";
+  readonly #op: ComparisonOp;
   readonly #right: string | number | boolean;
 
   constructor(
     left: string,
-    op: "==" | "!=",
+    op: ComparisonOp,
     right: string | number | boolean,
     sources: ReadonlySet<ExpressionSource>,
   ) {
@@ -206,7 +292,7 @@ export class ComparisonCondition extends Condition {
   override not(): Condition {
     return new ComparisonCondition(
       this.#left,
-      this.#op === "==" ? "!=" : "==",
+      NEGATED_OP[this.#op],
       this.#right,
       this.sources,
     );
@@ -782,6 +868,360 @@ class ConcatValue extends ExpressionValue {
       .map((p) => (p instanceof ExpressionValue ? p.toString() : p))
       .join("");
   }
+}
+
+// --- numeric addition ---
+
+/** a part of an addition: plain number or expression */
+export type AddPart = number | ExpressionValue;
+
+/**
+ * Adds numbers and expressions together. Uses the `+` operator in GitHub
+ * Actions expression contexts.
+ *
+ * ```ts
+ * const total = add(1, expr("matrix.count"));
+ * total.toString()  // => "${{ 1 + matrix.count }}"
+ * total.expression  // => "1 + matrix.count"
+ *
+ * const sum = add(expr("steps.a.outputs.x"), expr("steps.b.outputs.y"), 10);
+ * sum.toString()  // => "${{ steps.a.outputs.x + steps.b.outputs.y + 10 }}"
+ * ```
+ */
+export function add(...parts: AddPart[]): ExpressionValue {
+  if (parts.length === 0) {
+    return new InlineValue(0);
+  }
+  if (parts.length === 1) {
+    const p = parts[0];
+    if (p instanceof ExpressionValue) return p;
+    return new InlineValue(p);
+  }
+
+  // flatten nested AddValues and collect all terms
+  const flat: (number | ExpressionValue)[] = [];
+  for (const part of parts) {
+    if (part instanceof AddValue) {
+      flat.push(...part.addParts);
+    } else if (part instanceof InlineValue) {
+      // extract the numeric value from InlineValue
+      const n = Number(part.expression);
+      if (!Number.isNaN(n)) {
+        flat.push(n);
+      } else {
+        flat.push(part);
+      }
+    } else {
+      flat.push(part);
+    }
+  }
+
+  // merge adjacent numbers
+  const merged: (number | ExpressionValue)[] = [];
+  for (const part of flat) {
+    const last = merged.length > 0 ? merged[merged.length - 1] : undefined;
+    if (typeof part === "number" && typeof last === "number") {
+      merged[merged.length - 1] = last + part;
+    } else {
+      merged.push(part);
+    }
+  }
+
+  // degenerate cases after merging
+  if (merged.length === 1) {
+    const p = merged[0];
+    if (typeof p === "number") return new InlineValue(p);
+    return p;
+  }
+
+  // collect sources from all expression parts
+  const sources = new Set<ExpressionSource>();
+  for (const part of merged) {
+    if (part instanceof ExpressionValue) {
+      for (const s of part.allSources) sources.add(s);
+    }
+  }
+
+  // build expression using + operator
+  const exprParts = merged.map((p) =>
+    p instanceof ExpressionValue ? p.expression : String(p)
+  );
+  const addExpr = exprParts.join(" + ");
+
+  return new AddValue(addExpr, merged, sources);
+}
+
+class AddValue extends ExpressionValue {
+  readonly #parts: readonly (number | ExpressionValue)[];
+
+  constructor(
+    addExpr: string,
+    parts: (number | ExpressionValue)[],
+    sources: ReadonlySet<ExpressionSource>,
+  ) {
+    super(addExpr, sources);
+    this.#parts = Object.freeze([...parts]);
+  }
+
+  /** the individual parts of this addition (for flattening nested adds) */
+  get addParts(): readonly (number | ExpressionValue)[] {
+    return this.#parts;
+  }
+}
+
+// --- numeric subtraction ---
+
+/**
+ * Subtracts the right operand from the left. Uses the `-` operator in GitHub
+ * Actions expression contexts.
+ *
+ * ```ts
+ * const diff = subtract(expr("matrix.total"), 1);
+ * diff.toString()  // => "${{ matrix.total - 1 }}"
+ * diff.expression  // => "matrix.total - 1"
+ * ```
+ */
+export function subtract(left: AddPart, right: AddPart): ExpressionValue {
+  // both literal numbers → compute at build time
+  if (typeof left === "number" && typeof right === "number") {
+    return new InlineValue(left - right);
+  }
+
+  const lhs = typeof left === "number" ? new InlineValue(left) : left;
+  const rhs = typeof right === "number" ? new InlineValue(right) : right;
+
+  const sources = new Set<ExpressionSource>();
+  for (const s of lhs.allSources) sources.add(s);
+  for (const s of rhs.allSources) sources.add(s);
+
+  const subExpr = `${lhs.expression} - ${rhs.expression}`;
+  return new ExpressionValue(subExpr, sources);
+}
+
+// --- numeric multiplication ---
+
+/**
+ * Multiplies numbers and expressions together. Uses the `*` operator in GitHub
+ * Actions expression contexts.
+ *
+ * ```ts
+ * const total = multiply(expr("matrix.count"), 2);
+ * total.toString()  // => "${{ matrix.count * 2 }}"
+ * total.expression  // => "matrix.count * 2"
+ * ```
+ */
+export function multiply(...parts: AddPart[]): ExpressionValue {
+  if (parts.length === 0) {
+    return new InlineValue(1);
+  }
+  if (parts.length === 1) {
+    const p = parts[0];
+    if (p instanceof ExpressionValue) return p;
+    return new InlineValue(p);
+  }
+
+  // flatten nested MultiplyValues and collect all terms
+  const flat: (number | ExpressionValue)[] = [];
+  for (const part of parts) {
+    if (part instanceof MultiplyValue) {
+      flat.push(...part.multiplyParts);
+    } else if (part instanceof InlineValue) {
+      const n = Number(part.expression);
+      if (!Number.isNaN(n)) {
+        flat.push(n);
+      } else {
+        flat.push(part);
+      }
+    } else {
+      flat.push(part);
+    }
+  }
+
+  // merge adjacent numbers
+  const merged: (number | ExpressionValue)[] = [];
+  for (const part of flat) {
+    const last = merged.length > 0 ? merged[merged.length - 1] : undefined;
+    if (typeof part === "number" && typeof last === "number") {
+      merged[merged.length - 1] = last * part;
+    } else {
+      merged.push(part);
+    }
+  }
+
+  // degenerate cases after merging
+  if (merged.length === 1) {
+    const p = merged[0];
+    if (typeof p === "number") return new InlineValue(p);
+    return p;
+  }
+
+  // collect sources from all expression parts
+  const sources = new Set<ExpressionSource>();
+  for (const part of merged) {
+    if (part instanceof ExpressionValue) {
+      for (const s of part.allSources) sources.add(s);
+    }
+  }
+
+  const exprParts = merged.map((p) =>
+    p instanceof ExpressionValue ? p.expression : String(p)
+  );
+  const mulExpr = exprParts.join(" * ");
+
+  return new MultiplyValue(mulExpr, merged, sources);
+}
+
+class MultiplyValue extends ExpressionValue {
+  readonly #parts: readonly (number | ExpressionValue)[];
+
+  constructor(
+    mulExpr: string,
+    parts: (number | ExpressionValue)[],
+    sources: ReadonlySet<ExpressionSource>,
+  ) {
+    super(mulExpr, sources);
+    this.#parts = Object.freeze([...parts]);
+  }
+
+  /** the individual parts of this multiplication (for flattening nested multiplies) */
+  get multiplyParts(): readonly (number | ExpressionValue)[] {
+    return this.#parts;
+  }
+}
+
+// --- numeric division ---
+
+/**
+ * Divides the left operand by the right. Uses the `/` operator in GitHub
+ * Actions expression contexts.
+ *
+ * ```ts
+ * const half = divide(expr("matrix.total"), 2);
+ * half.toString()  // => "${{ matrix.total / 2 }}"
+ * ```
+ */
+export function divide(left: AddPart, right: AddPart): ExpressionValue {
+  if (typeof left === "number" && typeof right === "number") {
+    return new InlineValue(left / right);
+  }
+
+  const lhs = typeof left === "number" ? new InlineValue(left) : left;
+  const rhs = typeof right === "number" ? new InlineValue(right) : right;
+
+  const sources = new Set<ExpressionSource>();
+  for (const s of lhs.allSources) sources.add(s);
+  for (const s of rhs.allSources) sources.add(s);
+
+  return new ExpressionValue(`${lhs.expression} / ${rhs.expression}`, sources);
+}
+
+// --- numeric modulo ---
+
+/**
+ * Computes the remainder of the left operand divided by the right. Uses the
+ * `%` operator in GitHub Actions expression contexts.
+ *
+ * ```ts
+ * const rem = modulo(expr("matrix.index"), 2);
+ * rem.toString()  // => "${{ matrix.index % 2 }}"
+ * ```
+ */
+export function modulo(left: AddPart, right: AddPart): ExpressionValue {
+  if (typeof left === "number" && typeof right === "number") {
+    return new InlineValue(left % right);
+  }
+
+  const lhs = typeof left === "number" ? new InlineValue(left) : left;
+  const rhs = typeof right === "number" ? new InlineValue(right) : right;
+
+  const sources = new Set<ExpressionSource>();
+  for (const s of lhs.allSources) sources.add(s);
+  for (const s of rhs.allSources) sources.add(s);
+
+  return new ExpressionValue(`${lhs.expression} % ${rhs.expression}`, sources);
+}
+
+// --- JSON functions ---
+
+/**
+ * Parses a JSON string into an object/value. Wraps in `fromJSON()` in GitHub
+ * Actions expression contexts.
+ *
+ * ```ts
+ * const matrix = fromJSON(expr("needs.setup.outputs.matrix"));
+ * matrix.toString()  // => "${{ fromJSON(needs.setup.outputs.matrix) }}"
+ * ```
+ */
+export function fromJSON(value: string | ExpressionValue): ExpressionValue {
+  if (typeof value === "string") {
+    return new ExpressionValue(`fromJSON(${formatLiteral(value)})`);
+  }
+  const sources = new Set<ExpressionSource>();
+  for (const s of value.allSources) sources.add(s);
+  return new ExpressionValue(`fromJSON(${value.expression})`, sources);
+}
+
+/**
+ * Serializes a value to JSON. Wraps in `toJSON()` in GitHub Actions expression
+ * contexts.
+ *
+ * ```ts
+ * const json = toJSON(expr("github.event"));
+ * json.toString()  // => "${{ toJSON(github.event) }}"
+ * ```
+ */
+export function toJSON(value: ExpressionValue): ExpressionValue {
+  const sources = new Set<ExpressionSource>();
+  for (const s of value.allSources) sources.add(s);
+  return new ExpressionValue(`toJSON(${value.expression})`, sources);
+}
+
+// --- hashFiles ---
+
+/** Computes a hash of files matching the given glob patterns. */
+export function hashFiles(
+  ...patterns: (string | ExpressionValue)[]
+): ExpressionValue {
+  const sources = new Set<ExpressionSource>();
+  const args: string[] = [];
+  for (const p of patterns) {
+    if (p instanceof ExpressionValue) {
+      for (const s of p.allSources) sources.add(s);
+      args.push(p.expression);
+    } else {
+      args.push(formatLiteral(p));
+    }
+  }
+  return new ExpressionValue(
+    `hashFiles(${args.join(", ")})`,
+    sources.size > 0 ? sources : undefined,
+  );
+}
+
+// --- join ---
+
+/**
+ * Joins an array expression with an optional separator. Wraps in `join()` in
+ * GitHub Actions expression contexts.
+ *
+ * ```ts
+ * const labels = join(expr("github.event.pull_request.labels.*.name"), ", ");
+ * labels.toString()  // => "${{ join(github.event.pull_request.labels.*.name, ', ') }}"
+ * ```
+ */
+export function join(
+  value: ExpressionValue,
+  separator?: string,
+): ExpressionValue {
+  const sources = new Set<ExpressionSource>();
+  for (const s of value.allSources) sources.add(s);
+  const args = separator != null
+    ? `${value.expression}, ${formatLiteral(separator)}`
+    : value.expression;
+  return new ExpressionValue(
+    `join(${args})`,
+    sources.size > 0 ? sources : undefined,
+  );
 }
 
 // --- inline value (serializes as plain value, not ${{ }}) ---
