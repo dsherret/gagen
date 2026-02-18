@@ -27,12 +27,10 @@ export type {
   WorkflowTriggers,
 } from "./workflow.ts";
 export {
-  add,
   concat,
   Condition,
   conditions,
   defineExprObj,
-  divide,
   ElseIfBuilder,
   expr,
   ExpressionValue,
@@ -40,14 +38,10 @@ export {
   hashFiles,
   join,
   literal,
-  modulo,
-  multiply,
-  subtract,
   ThenBuilder,
   toJSON,
 } from "./expression.ts";
 export type {
-  AddPart,
   ComparisonOp,
   ConcatPart,
   ExpressionSource,
