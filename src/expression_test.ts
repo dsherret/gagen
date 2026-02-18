@@ -1,18 +1,27 @@
 import { assertEquals } from "@std/assert";
 import {
+  add,
   ComparisonCondition,
   concat,
   Condition,
   conditions,
   defineExprObj,
+  divide,
   expr,
   type ExpressionSource,
   ExpressionValue,
+  fromJSON,
   FunctionCallCondition,
+  hashFiles,
   isAlwaysFalse,
   isAlwaysTrue,
+  join,
   literal,
+  modulo,
+  multiply,
   RawCondition,
+  subtract,
+  toJSON,
 } from "./expression.ts";
 
 // --- helpers for constructing conditions directly ---
@@ -840,4 +849,457 @@ Deno.test("ExpressionValue.concat() with multiple parts", () => {
   const v = literal("a-").concat(expr("matrix.os"), "-b");
   assertEquals(v.toString(), "a-${{ matrix.os }}-b");
   assertEquals(v.expression, "format('a-{0}-b', matrix.os)");
+});
+
+// --- add ---
+
+Deno.test("add number + expression", () => {
+  const v = add(1, expr("matrix.count"));
+  assertEquals(v.toString(), "${{ 1 + matrix.count }}");
+  assertEquals(v.expression, "1 + matrix.count");
+});
+
+Deno.test("add expression + number", () => {
+  const v = add(expr("matrix.count"), 5);
+  assertEquals(v.toString(), "${{ matrix.count + 5 }}");
+  assertEquals(v.expression, "matrix.count + 5");
+});
+
+Deno.test("add multiple expressions with numbers", () => {
+  const v = add(expr("steps.a.outputs.x"), 10, expr("steps.b.outputs.y"));
+  assertEquals(
+    v.toString(),
+    "${{ steps.a.outputs.x + 10 + steps.b.outputs.y }}",
+  );
+  assertEquals(
+    v.expression,
+    "steps.a.outputs.x + 10 + steps.b.outputs.y",
+  );
+});
+
+Deno.test("add with no args returns inline 0", () => {
+  const v = add();
+  assertEquals(v.toString(), "0");
+});
+
+Deno.test("add with single number returns inline value", () => {
+  const v = add(42);
+  assertEquals(v.toString(), "42");
+});
+
+Deno.test("add with single expression returns it as-is", () => {
+  const e = expr("matrix.count");
+  const v = add(e);
+  assertEquals(v, e);
+});
+
+Deno.test("add merges adjacent numbers", () => {
+  const v = add(1, 2, 3, expr("x"));
+  assertEquals(v.toString(), "${{ 6 + x }}");
+  assertEquals(v.expression, "6 + x");
+});
+
+Deno.test("add all numbers returns inline value", () => {
+  const v = add(1, 2, 3);
+  assertEquals(v.toString(), "6");
+});
+
+Deno.test("add tracks sources from all expressions", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const v1 = new ExpressionValue("steps.a.outputs.x", s1);
+  const v2 = new ExpressionValue("steps.b.outputs.y", s2);
+  const v = add(v1, 10, v2);
+  assertEquals(v.allSources.size, 2);
+  assertEquals(v.allSources.has(s1), true);
+  assertEquals(v.allSources.has(s2), true);
+});
+
+Deno.test("add result works with .equals()", () => {
+  const v = add(expr("matrix.x"), 1);
+  assertEquals(
+    v.equals(10).toExpression(),
+    "matrix.x + 1 == 10",
+  );
+});
+
+Deno.test("add flattens nested adds", () => {
+  const inner = add(1, expr("x"));
+  const outer = add(inner, 2, expr("y"));
+  assertEquals(outer.toString(), "${{ 1 + x + 2 + y }}");
+  assertEquals(outer.expression, "1 + x + 2 + y");
+});
+
+Deno.test("add flattens and merges adjacent numbers across nesting", () => {
+  const inner = add(expr("x"), 3);
+  const outer = add(5, inner);
+  assertEquals(outer.toString(), "${{ 5 + x + 3 }}");
+  assertEquals(outer.expression, "5 + x + 3");
+});
+
+Deno.test("add with literal() number expression", () => {
+  const v = add(literal(5), expr("x"));
+  assertEquals(v.toString(), "${{ 5 + x }}");
+  assertEquals(v.expression, "5 + x");
+});
+
+Deno.test("ExpressionValue.add() method", () => {
+  const v = expr("matrix.count").add(1);
+  assertEquals(v.toString(), "${{ matrix.count + 1 }}");
+  assertEquals(v.expression, "matrix.count + 1");
+});
+
+Deno.test("ExpressionValue.add() with multiple parts", () => {
+  const v = expr("x").add(expr("y"), 10);
+  assertEquals(v.toString(), "${{ x + y + 10 }}");
+  assertEquals(v.expression, "x + y + 10");
+});
+
+// --- subtract ---
+
+Deno.test("subtract expression - number", () => {
+  const v = subtract(expr("matrix.total"), 1);
+  assertEquals(v.toString(), "${{ matrix.total - 1 }}");
+  assertEquals(v.expression, "matrix.total - 1");
+});
+
+Deno.test("subtract number - expression", () => {
+  const v = subtract(100, expr("matrix.count"));
+  assertEquals(v.toString(), "${{ 100 - matrix.count }}");
+  assertEquals(v.expression, "100 - matrix.count");
+});
+
+Deno.test("subtract expression - expression", () => {
+  const v = subtract(expr("steps.a.outputs.x"), expr("steps.b.outputs.y"));
+  assertEquals(v.toString(), "${{ steps.a.outputs.x - steps.b.outputs.y }}");
+  assertEquals(v.expression, "steps.a.outputs.x - steps.b.outputs.y");
+});
+
+Deno.test("subtract two numbers returns inline value", () => {
+  const v = subtract(10, 3);
+  assertEquals(v.toString(), "7");
+});
+
+Deno.test("subtract tracks sources from both expressions", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const v1 = new ExpressionValue("steps.a.outputs.x", s1);
+  const v2 = new ExpressionValue("steps.b.outputs.y", s2);
+  const v = subtract(v1, v2);
+  assertEquals(v.allSources.size, 2);
+  assertEquals(v.allSources.has(s1), true);
+  assertEquals(v.allSources.has(s2), true);
+});
+
+Deno.test("subtract result works with .equals()", () => {
+  const v = subtract(expr("matrix.x"), 1);
+  assertEquals(
+    v.equals(0).toExpression(),
+    "matrix.x - 1 == 0",
+  );
+});
+
+Deno.test("ExpressionValue.subtract() method", () => {
+  const v = expr("matrix.total").subtract(1);
+  assertEquals(v.toString(), "${{ matrix.total - 1 }}");
+  assertEquals(v.expression, "matrix.total - 1");
+});
+
+Deno.test("ExpressionValue.subtract() chained", () => {
+  const v = expr("x").subtract(1).subtract(expr("y"));
+  assertEquals(v.toString(), "${{ x - 1 - y }}");
+  assertEquals(v.expression, "x - 1 - y");
+});
+
+// --- multiply ---
+
+Deno.test("multiply expression * number", () => {
+  const v = multiply(expr("matrix.count"), 2);
+  assertEquals(v.toString(), "${{ matrix.count * 2 }}");
+  assertEquals(v.expression, "matrix.count * 2");
+});
+
+Deno.test("multiply multiple expressions with numbers", () => {
+  const v = multiply(expr("x"), 3, expr("y"));
+  assertEquals(v.toString(), "${{ x * 3 * y }}");
+  assertEquals(v.expression, "x * 3 * y");
+});
+
+Deno.test("multiply with no args returns inline 1", () => {
+  const v = multiply();
+  assertEquals(v.toString(), "1");
+});
+
+Deno.test("multiply with single expression returns it as-is", () => {
+  const e = expr("x");
+  assertEquals(multiply(e), e);
+});
+
+Deno.test("multiply merges adjacent numbers", () => {
+  const v = multiply(2, 3, expr("x"));
+  assertEquals(v.toString(), "${{ 6 * x }}");
+  assertEquals(v.expression, "6 * x");
+});
+
+Deno.test("multiply all numbers returns inline value", () => {
+  const v = multiply(2, 3, 4);
+  assertEquals(v.toString(), "24");
+});
+
+Deno.test("multiply flattens nested multiplies", () => {
+  const inner = multiply(2, expr("x"));
+  const outer = multiply(inner, 3, expr("y"));
+  assertEquals(outer.toString(), "${{ 2 * x * 3 * y }}");
+  assertEquals(outer.expression, "2 * x * 3 * y");
+});
+
+Deno.test("multiply tracks sources", () => {
+  const s1 = { id: "s1" };
+  const v1 = new ExpressionValue("steps.a.outputs.x", s1);
+  const v = multiply(v1, 2);
+  assertEquals(v.allSources.size, 1);
+  assertEquals(v.allSources.has(s1), true);
+});
+
+Deno.test("ExpressionValue.multiply() method", () => {
+  const v = expr("x").multiply(2);
+  assertEquals(v.toString(), "${{ x * 2 }}");
+  assertEquals(v.expression, "x * 2");
+});
+
+// --- divide ---
+
+Deno.test("divide expression / number", () => {
+  const v = divide(expr("matrix.total"), 2);
+  assertEquals(v.toString(), "${{ matrix.total / 2 }}");
+  assertEquals(v.expression, "matrix.total / 2");
+});
+
+Deno.test("divide two numbers returns inline value", () => {
+  const v = divide(10, 2);
+  assertEquals(v.toString(), "5");
+});
+
+Deno.test("divide tracks sources", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const v1 = new ExpressionValue("steps.a.outputs.x", s1);
+  const v2 = new ExpressionValue("steps.b.outputs.y", s2);
+  const v = divide(v1, v2);
+  assertEquals(v.allSources.size, 2);
+  assertEquals(v.allSources.has(s1), true);
+  assertEquals(v.allSources.has(s2), true);
+});
+
+Deno.test("ExpressionValue.divide() method", () => {
+  const v = expr("x").divide(2);
+  assertEquals(v.toString(), "${{ x / 2 }}");
+  assertEquals(v.expression, "x / 2");
+});
+
+// --- modulo ---
+
+Deno.test("modulo expression % number", () => {
+  const v = modulo(expr("matrix.index"), 2);
+  assertEquals(v.toString(), "${{ matrix.index % 2 }}");
+  assertEquals(v.expression, "matrix.index % 2");
+});
+
+Deno.test("modulo two numbers returns inline value", () => {
+  const v = modulo(10, 3);
+  assertEquals(v.toString(), "1");
+});
+
+Deno.test("modulo tracks sources", () => {
+  const s1 = { id: "s1" };
+  const v1 = new ExpressionValue("steps.a.outputs.x", s1);
+  const v = modulo(v1, 2);
+  assertEquals(v.allSources.size, 1);
+  assertEquals(v.allSources.has(s1), true);
+});
+
+Deno.test("ExpressionValue.modulo() method", () => {
+  const v = expr("x").modulo(3);
+  assertEquals(v.toString(), "${{ x % 3 }}");
+  assertEquals(v.expression, "x % 3");
+});
+
+// --- endsWith ---
+
+Deno.test("endsWith produces function call", () => {
+  const c = expr("github.ref").endsWith("/main");
+  assertEquals(c.toExpression(), "endsWith(github.ref, '/main')");
+});
+
+Deno.test("endsWith source tracking", () => {
+  const s = { id: "s1" };
+  const v = new ExpressionValue("steps.a.outputs.x", s);
+  const c = v.endsWith("test");
+  assertEquals(c.sources.size, 1);
+  assertEquals(c.sources.has(s), true);
+});
+
+// --- numeric comparisons ---
+
+Deno.test("greaterThan produces comparison", () => {
+  const c = expr("matrix.count").greaterThan(5);
+  assertEquals(c.toExpression(), "matrix.count > 5");
+});
+
+Deno.test("greaterThanOrEqual produces comparison", () => {
+  const c = expr("matrix.count").greaterThanOrEqual(5);
+  assertEquals(c.toExpression(), "matrix.count >= 5");
+});
+
+Deno.test("lessThan produces comparison", () => {
+  const c = expr("matrix.count").lessThan(10);
+  assertEquals(c.toExpression(), "matrix.count < 10");
+});
+
+Deno.test("lessThanOrEqual produces comparison", () => {
+  const c = expr("matrix.count").lessThanOrEqual(10);
+  assertEquals(c.toExpression(), "matrix.count <= 10");
+});
+
+Deno.test("greaterThan.not() produces lessThanOrEqual", () => {
+  const c = expr("x").greaterThan(5).not();
+  assertEquals(c.toExpression(), "x <= 5");
+});
+
+Deno.test("lessThan.not() produces greaterThanOrEqual", () => {
+  const c = expr("x").lessThan(5).not();
+  assertEquals(c.toExpression(), "x >= 5");
+});
+
+Deno.test("greaterThanOrEqual.not() produces lessThan", () => {
+  const c = expr("x").greaterThanOrEqual(5).not();
+  assertEquals(c.toExpression(), "x < 5");
+});
+
+Deno.test("lessThanOrEqual.not() produces greaterThan", () => {
+  const c = expr("x").lessThanOrEqual(5).not();
+  assertEquals(c.toExpression(), "x > 5");
+});
+
+Deno.test("numeric comparison source tracking", () => {
+  const s = { id: "s1" };
+  const v = new ExpressionValue("steps.a.outputs.count", s);
+  const c = v.greaterThan(0);
+  assertEquals(c.sources.size, 1);
+  assertEquals(c.sources.has(s), true);
+});
+
+Deno.test("numeric comparison in and/or chain", () => {
+  const c = expr("x").greaterThan(0).and(expr("x").lessThan(100));
+  assertEquals(c.toExpression(), "x > 0 && x < 100");
+});
+
+// --- fromJSON ---
+
+Deno.test("fromJSON with expression", () => {
+  const v = fromJSON(expr("needs.setup.outputs.matrix"));
+  assertEquals(v.toString(), "${{ fromJSON(needs.setup.outputs.matrix) }}");
+  assertEquals(v.expression, "fromJSON(needs.setup.outputs.matrix)");
+});
+
+Deno.test("fromJSON with string", () => {
+  const v = fromJSON('{"key": "value"}');
+  assertEquals(v.toString(), '${{ fromJSON(\'{"key": "value"}\') }}');
+  assertEquals(v.expression, 'fromJSON(\'{"key": "value"}\')');
+});
+
+Deno.test("fromJSON tracks sources", () => {
+  const s = { id: "s1" };
+  const v = new ExpressionValue("needs.setup.outputs.matrix", s);
+  const result = fromJSON(v);
+  assertEquals(result.allSources.size, 1);
+  assertEquals(result.allSources.has(s), true);
+});
+
+// --- toJSON ---
+
+Deno.test("toJSON with expression", () => {
+  const v = toJSON(expr("github.event"));
+  assertEquals(v.toString(), "${{ toJSON(github.event) }}");
+  assertEquals(v.expression, "toJSON(github.event)");
+});
+
+Deno.test("toJSON tracks sources", () => {
+  const s = { id: "s1" };
+  const v = new ExpressionValue("steps.a.outputs.data", s);
+  const result = toJSON(v);
+  assertEquals(result.allSources.size, 1);
+  assertEquals(result.allSources.has(s), true);
+});
+
+Deno.test("ExpressionValue.toJSON() method", () => {
+  const v = expr("github.event").toJSON();
+  assertEquals(v.toString(), "${{ toJSON(github.event) }}");
+});
+
+// --- hashFiles ---
+
+Deno.test("hashFiles with single pattern", () => {
+  const v = hashFiles("**/package-lock.json");
+  assertEquals(v.toString(), "${{ hashFiles('**/package-lock.json') }}");
+  assertEquals(v.expression, "hashFiles('**/package-lock.json')");
+});
+
+Deno.test("hashFiles with multiple patterns", () => {
+  const v = hashFiles("**/package-lock.json", "**/yarn.lock");
+  assertEquals(
+    v.toString(),
+    "${{ hashFiles('**/package-lock.json', '**/yarn.lock') }}",
+  );
+});
+
+Deno.test("hashFiles with expression pattern", () => {
+  const v = hashFiles(expr("matrix.lockfile"));
+  assertEquals(v.toString(), "${{ hashFiles(matrix.lockfile) }}");
+  assertEquals(v.expression, "hashFiles(matrix.lockfile)");
+});
+
+Deno.test("hashFiles tracks sources from expression patterns", () => {
+  const s = { id: "s1" };
+  const v = new ExpressionValue("steps.a.outputs.pattern", s);
+  const result = hashFiles(v);
+  assertEquals(result.allSources.size, 1);
+  assertEquals(result.allSources.has(s), true);
+});
+
+Deno.test("hashFiles result works with concat for cache keys", () => {
+  const hash = hashFiles("**/package-lock.json");
+  const key = concat("node-", expr("runner.os"), "-", hash);
+  assertEquals(
+    key.toString(),
+    "node-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}",
+  );
+});
+
+// --- join ---
+
+Deno.test("join with separator", () => {
+  const v = join(expr("github.event.pull_request.labels.*.name"), ", ");
+  assertEquals(
+    v.toString(),
+    "${{ join(github.event.pull_request.labels.*.name, ', ') }}",
+  );
+  assertEquals(
+    v.expression,
+    "join(github.event.pull_request.labels.*.name, ', ')",
+  );
+});
+
+Deno.test("join without separator", () => {
+  const v = join(expr("matrix.os"));
+  assertEquals(v.toString(), "${{ join(matrix.os) }}");
+  assertEquals(v.expression, "join(matrix.os)");
+});
+
+Deno.test("join tracks sources", () => {
+  const s = { id: "s1" };
+  const v = new ExpressionValue("steps.a.outputs.list", s);
+  const result = join(v, ",");
+  assertEquals(result.allSources.size, 1);
+  assertEquals(result.allSources.has(s), true);
 });
