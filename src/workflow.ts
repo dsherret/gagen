@@ -5,6 +5,13 @@ import { ExpressionValue } from "./expression.ts";
 import { Job, job as jobFn, type JobDef, resolveJobId } from "./job.ts";
 import type { Permissions } from "./permissions.ts";
 import type { ConfigValue, Step } from "./step.ts";
+import {
+  formatPinComments,
+  parsePinComments,
+  pinYamlContent,
+  unpinParsedYaml,
+} from "./pin.ts";
+import type { RefResolver } from "./pin.ts";
 import fs from "node:fs";
 
 export interface WorkflowCallInput {
@@ -168,14 +175,28 @@ export class Workflow {
   }
 
   writeOrLint(
-    options: { filePath: URL; header?: string },
+    options: {
+      filePath: URL;
+      header?: string;
+      pinDeps?: boolean | { resolve: RefResolver };
+    },
   ): void {
+    const pinDeps = options.pinDeps ?? true;
     const expected = this.toYamlString(options);
 
     if (isLinting) {
       const existing = fs.readFileSync(options.filePath, { encoding: "utf8" });
-      const parsedExisting = parse(existing);
-      const parsedExpected = parse(expected);
+      let parsedExisting: unknown;
+      let parsedExpected: unknown;
+
+      if (pinDeps) {
+        const pins = parsePinComments(existing);
+        parsedExisting = unpinParsedYaml(parse(existing), pins);
+        parsedExpected = parse(expected);
+      } else {
+        parsedExisting = parse(existing);
+        parsedExpected = parse(expected);
+      }
 
       if (
         JSON.stringify(parsedExisting) !== JSON.stringify(parsedExpected)
@@ -186,7 +207,15 @@ export class Workflow {
         process.exit(1);
       }
     } else {
-      fs.writeFileSync(options.filePath, expected);
+      let output = expected;
+      if (pinDeps) {
+        const resolve = typeof pinDeps === "object"
+          ? pinDeps.resolve
+          : undefined;
+        const result = pinYamlContent(expected, resolve);
+        output = result.content + formatPinComments(result.pins);
+      }
+      fs.writeFileSync(options.filePath, output);
     }
   }
 }

@@ -49,6 +49,14 @@ export type {
   ExprOf,
   TernaryValue,
 } from "./expression.ts";
+export {
+  formatPinComments,
+  parsePinComments,
+  pinYamlContent,
+  resolveRef,
+  unpinParsedYaml,
+} from "./pin.ts";
+export type { PinEntry, RefResolver } from "./pin.ts";
 export { defineMatrix, Matrix } from "./matrix.ts";
 export type {
   PermissionLevel,
