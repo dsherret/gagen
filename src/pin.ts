@@ -137,9 +137,11 @@ export function unpinParsedYaml(
 
   const record = obj as Record<string, unknown>;
   if (record.jobs && typeof record.jobs === "object") {
-    for (const jobValue of Object.values(
-      record.jobs as Record<string, unknown>,
-    )) {
+    for (
+      const jobValue of Object.values(
+        record.jobs as Record<string, unknown>,
+      )
+    ) {
       if (typeof jobValue !== "object" || jobValue === null) continue;
       const jobObj = jobValue as Record<string, unknown>;
 

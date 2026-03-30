@@ -5062,12 +5062,22 @@ Deno.test("isCommitHash recognizes 40-char hex", () => {
 
 Deno.test("parseActionUses parses owner/repo@ref", () => {
   const result = parseActionUses("actions/checkout@v6");
-  assertEquals(result, { owner: "actions", repo: "checkout", path: "", ref: "v6" });
+  assertEquals(result, {
+    owner: "actions",
+    repo: "checkout",
+    path: "",
+    ref: "v6",
+  });
 });
 
 Deno.test("parseActionUses parses owner/repo/path@ref", () => {
   const result = parseActionUses("actions/aws/cli@v1");
-  assertEquals(result, { owner: "actions", repo: "aws", path: "cli", ref: "v1" });
+  assertEquals(result, {
+    owner: "actions",
+    repo: "aws",
+    path: "cli",
+    ref: "v1",
+  });
 });
 
 Deno.test("parseActionUses returns undefined for local actions", () => {
@@ -5103,7 +5113,10 @@ name: ci
 # some other comment
 `;
   const pins = parsePinComments(content);
-  assertEquals(pins, [{ original: "actions/checkout@v6", hash: "a".repeat(40) }]);
+  assertEquals(pins, [{
+    original: "actions/checkout@v6",
+    hash: "a".repeat(40),
+  }]);
 });
 
 Deno.test("pinYamlContent resolves uses refs with mock resolver", () => {
@@ -5267,10 +5280,15 @@ Deno.test("writeOrLint pinDeps writes pinned output", () => {
 
     const written = Deno.readTextFileSync(filePath);
     assertStringIncludes(written, `uses: actions/checkout@${fakeHash}`);
-    assertStringIncludes(written, `# gagen:pin actions/checkout@v6 = ${fakeHash}`);
+    assertStringIncludes(
+      written,
+      `# gagen:pin actions/checkout@v6 = ${fakeHash}`,
+    );
     // should NOT contain the original tag in the uses field
     const lines = written.split("\n");
-    const usesLine = lines.find((l) => l.trimStart().startsWith("uses:") || l.includes("- uses:"));
+    const usesLine = lines.find((l) =>
+      l.trimStart().startsWith("uses:") || l.includes("- uses:")
+    );
     assertEquals(usesLine?.includes("@v6"), false);
   } finally {
     Deno.removeSync(tmpDir, { recursive: true });
