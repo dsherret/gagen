@@ -74,9 +74,15 @@ export type RefResolver = (
 export function pinYamlContent(
   yamlStr: string,
   resolve: RefResolver = resolveRef,
+  cache?: readonly PinEntry[],
 ): { content: string; pins: PinEntry[] } {
   const pins: PinEntry[] = [];
   const seen = new Map<string, string>();
+  if (cache) {
+    for (const entry of cache) {
+      seen.set(entry.original, entry.hash);
+    }
+  }
 
   const content = yamlStr.replace(
     /^(\s+(?:-\s+)?uses:\s+)(.+)$/gm,

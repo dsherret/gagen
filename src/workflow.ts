@@ -11,7 +11,7 @@ import {
   pinYamlContent,
   unpinParsedYaml,
 } from "./pin.ts";
-import type { RefResolver } from "./pin.ts";
+import type { PinEntry, RefResolver } from "./pin.ts";
 import fs from "node:fs";
 
 export interface WorkflowCallInput {
@@ -212,7 +212,18 @@ export class Workflow {
         const resolve = typeof pinDeps === "object"
           ? pinDeps.resolve
           : undefined;
-        const result = pinYamlContent(expected, resolve);
+        // reuse previously resolved hashes from existing file to avoid
+        // redundant git ls-remote calls on subsequent runs
+        let cache: PinEntry[] | undefined;
+        try {
+          const existing = fs.readFileSync(options.filePath, {
+            encoding: "utf8",
+          });
+          cache = parsePinComments(existing);
+        } catch {
+          // file doesn't exist yet
+        }
+        const result = pinYamlContent(expected, resolve, cache);
         output = result.content + formatPinComments(result.pins);
       }
       fs.writeFileSync(options.filePath, output);

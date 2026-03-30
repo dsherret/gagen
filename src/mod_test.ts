@@ -5256,6 +5256,40 @@ Deno.test("writeOrLint pins deps by default", () => {
   }
 });
 
+Deno.test("writeOrLint reuses cached pins on subsequent writes", () => {
+  setup();
+  const fakeHash = "c".repeat(40);
+  let resolveCount = 0;
+  const resolve = () => {
+    resolveCount++;
+    return fakeHash;
+  };
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses: "actions/checkout@v6" })],
+    }],
+  });
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  try {
+    // first write resolves
+    wf.writeOrLint({ filePath, pinDeps: { resolve } });
+    assertEquals(resolveCount, 1);
+
+    // second write should reuse the cached pin — no new resolve call
+    wf.writeOrLint({ filePath, pinDeps: { resolve } });
+    assertEquals(resolveCount, 1);
+  } finally {
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
 Deno.test("writeOrLint pinDeps writes pinned output", () => {
   setup();
   const fakeHash = "a".repeat(40);
