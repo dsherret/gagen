@@ -86,6 +86,7 @@ file so that the original tag is preserved:
 ```yaml
 steps:
   - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+# gagen:pin actions/checkout@v6 = 11bd71901bbe5b1630ceea73d27597364c9af683
 ```
 
 To force re-resolving all pins, run with the `--update-pins` flag:
