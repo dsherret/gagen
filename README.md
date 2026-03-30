@@ -1,4 +1,4 @@
-# `jsr:@david/gagen`
+# gagen
 
 [![JSR](https://jsr.io/badges/@david/gagen)](https://jsr.io/@david/gagen)
 [![npm Version](https://img.shields.io/npm/v/gagen.svg?style=flat)](http://www.npmjs.com/package/gagen)
