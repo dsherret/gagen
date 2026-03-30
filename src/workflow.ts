@@ -215,13 +215,15 @@ export class Workflow {
         // reuse previously resolved hashes from existing file to avoid
         // redundant git ls-remote calls on subsequent runs
         let cache: PinEntry[] | undefined;
-        try {
-          const existing = fs.readFileSync(options.filePath, {
-            encoding: "utf8",
-          });
-          cache = parsePinComments(existing);
-        } catch {
-          // file doesn't exist yet
+        if (!isUpdatingPins()) {
+          try {
+            const existing = fs.readFileSync(options.filePath, {
+              encoding: "utf8",
+            });
+            cache = parsePinComments(existing);
+          } catch {
+            // file doesn't exist yet
+          }
         }
         const result = pinYamlContent(expected, resolve, cache);
         output = result.content + formatPinComments(result.pins);
@@ -233,6 +235,11 @@ export class Workflow {
 
 /** Gets if linting would occur when using `writeOrLint` on a workflow. */
 export const isLinting: boolean = process.argv.includes("--lint");
+
+/** Gets if pins should be re-resolved when using `writeOrLint` on a workflow. */
+export function isUpdatingPins(): boolean {
+  return process.argv.includes("--update-pins");
+}
 
 export function createWorkflow(config: WorkflowConfig): Workflow {
   return new Workflow(config);

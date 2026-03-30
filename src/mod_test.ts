@@ -5290,6 +5290,50 @@ Deno.test("writeOrLint reuses cached pins on subsequent writes", () => {
   }
 });
 
+Deno.test("writeOrLint --update-pins bypasses cache and re-resolves", () => {
+  setup();
+  const hash1 = "a".repeat(40);
+  const hash2 = "b".repeat(40);
+  let callCount = 0;
+  const resolve = () => {
+    callCount++;
+    return callCount === 1 ? hash1 : hash2;
+  };
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses: "actions/checkout@v6" })],
+    }],
+  });
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  try {
+    // first write resolves to hash1
+    wf.writeOrLint({ filePath, pinDeps: { resolve } });
+    assertEquals(callCount, 1);
+    assertStringIncludes(Deno.readTextFileSync(filePath), hash1);
+
+    // second write with --update-pins should re-resolve to hash2
+    process.argv.push("--update-pins");
+    try {
+      wf.writeOrLint({ filePath, pinDeps: { resolve } });
+    } finally {
+      process.argv.pop();
+    }
+    assertEquals(callCount, 2);
+    const written = Deno.readTextFileSync(filePath);
+    assertStringIncludes(written, hash2);
+    assertEquals(written.includes(hash1), false);
+  } finally {
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
 Deno.test("writeOrLint pinDeps writes pinned output", () => {
   setup();
   const fakeHash = "a".repeat(40);
