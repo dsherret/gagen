@@ -10,6 +10,9 @@ that automatically resolves step ordering and propagates conditions. The
 condition propagation helps skip unnecessary setup steps and eliminates needing
 to repeat condition text over and over again.
 
+Additionally, gagen automatically pins dependencies in the output so your
+initial code is more easily maintainable.
+
 ## Basic usage
 
 ```ts
@@ -81,33 +84,23 @@ hashes. A `uses` value like `actions/checkout@v6` becomes
 file so that the original tag is preserved:
 
 ```yaml
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-# gagen:pin actions/checkout@v6 = 11bd71901bbe5b1630ceea73d27597364c9af683
+steps:
+  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 ```
 
-Refs are resolved via `git ls-remote` on the first run. On subsequent runs the
-existing mapping is reused as a cache, so no network calls are made unless a new
-action is added.
-
-During `--lint`, the mapping is used to compare original tag references rather
-than resolved hashes — so lint won't fail just because a tag was re-pointed to a
-new commit.
-
-To force re-resolving all pins (for example after a dependency upgrade), run with
-the `--update-pins` flag:
+To force re-resolving all pins, run with the `--update-pins` flag:
 
 ```sh
 ./ci.generate.ts --update-pins
 ```
 
-Pinning can be disabled per-call:
+Pinning can be disabled by setting `pinDeps` to `false`:
 
 ```ts
 wf.writeOrLint({ filePath, pinDeps: false });
 ```
 
-Or a custom resolver can be provided:
+A custom resolver can also be provided:
 
 ```ts
 wf.writeOrLint({
