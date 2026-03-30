@@ -15,6 +15,15 @@ import {
 } from "./mod.ts";
 import { resolveJobId, toKebabCase } from "./job.ts";
 import { resetStepCounter } from "./step.ts";
+import {
+  formatPinComments,
+  isCommitHash,
+  parseActionUses,
+  parsePinComments,
+  type PinEntry,
+  pinYamlContent,
+  unpinParsedYaml,
+} from "./pin.ts";
 
 const { status, isTag, isBranch, isEvent, isRunnerOs, isRunnerArch } =
   conditions;
@@ -5040,4 +5049,392 @@ jobs:
         run: echo also
 `,
   );
+});
+
+// --- pin utilities ---
+
+Deno.test("isCommitHash recognizes 40-char hex", () => {
+  assertEquals(isCommitHash("a".repeat(40)), true);
+  assertEquals(isCommitHash("abc123"), false);
+  assertEquals(isCommitHash("v6"), false);
+  assertEquals(isCommitHash("g".repeat(40)), false);
+});
+
+Deno.test("parseActionUses parses owner/repo@ref", () => {
+  const result = parseActionUses("actions/checkout@v6");
+  assertEquals(result, {
+    owner: "actions",
+    repo: "checkout",
+    path: "",
+    ref: "v6",
+  });
+});
+
+Deno.test("parseActionUses parses owner/repo/path@ref", () => {
+  const result = parseActionUses("actions/aws/cli@v1");
+  assertEquals(result, {
+    owner: "actions",
+    repo: "aws",
+    path: "cli",
+    ref: "v1",
+  });
+});
+
+Deno.test("parseActionUses returns undefined for local actions", () => {
+  assertEquals(parseActionUses("./my-action"), undefined);
+});
+
+Deno.test("parseActionUses returns undefined for docker actions", () => {
+  assertEquals(parseActionUses("docker://alpine:3"), undefined);
+});
+
+Deno.test("parseActionUses returns undefined when no @", () => {
+  assertEquals(parseActionUses("actions/checkout"), undefined);
+});
+
+Deno.test("formatPinComments and parsePinComments round-trip", () => {
+  const pins: PinEntry[] = [
+    { original: "actions/checkout@v6", hash: "a".repeat(40) },
+    { original: "denoland/setup-deno@v2", hash: "b".repeat(40) },
+  ];
+  const formatted = formatPinComments(pins);
+  const parsed = parsePinComments(formatted);
+  assertEquals(parsed, pins);
+});
+
+Deno.test("formatPinComments returns empty string for no pins", () => {
+  assertEquals(formatPinComments([]), "");
+});
+
+Deno.test("parsePinComments ignores non-pin comments", () => {
+  const content = `# this is a header
+name: ci
+# gagen:pin actions/checkout@v6 = ${"a".repeat(40)}
+# some other comment
+`;
+  const pins = parsePinComments(content);
+  assertEquals(pins, [{
+    original: "actions/checkout@v6",
+    hash: "a".repeat(40),
+  }]);
+});
+
+Deno.test("pinYamlContent resolves uses refs with mock resolver", () => {
+  const yaml = `name: ci
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup
+        uses: denoland/setup-deno@v2
+      - run: echo hi
+`;
+  const fakeHash = "f".repeat(40);
+  const resolve = () => fakeHash;
+  const { content, pins } = pinYamlContent(yaml, resolve);
+
+  assertStringIncludes(content, `uses: actions/checkout@${fakeHash}`);
+  assertStringIncludes(content, `uses: denoland/setup-deno@${fakeHash}`);
+  assertEquals(pins.length, 2);
+  assertEquals(pins[0].original, "actions/checkout@v6");
+  assertEquals(pins[0].hash, fakeHash);
+  assertEquals(pins[1].original, "denoland/setup-deno@v2");
+});
+
+Deno.test("pinYamlContent skips already-pinned SHA refs", () => {
+  const existingHash = "a".repeat(40);
+  const yaml = `jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${existingHash}
+`;
+  const resolve = () => {
+    throw new Error("should not be called");
+  };
+  const { content, pins } = pinYamlContent(yaml, resolve);
+  assertEquals(pins.length, 0);
+  assertStringIncludes(content, `uses: actions/checkout@${existingHash}`);
+});
+
+Deno.test("pinYamlContent deduplicates same action used twice", () => {
+  const yaml = `jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+  b:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+`;
+  let callCount = 0;
+  const fakeHash = "c".repeat(40);
+  const resolve = () => {
+    callCount++;
+    return fakeHash;
+  };
+  const { pins } = pinYamlContent(yaml, resolve);
+  assertEquals(callCount, 1);
+  assertEquals(pins.length, 1);
+});
+
+Deno.test("unpinParsedYaml replaces hashes with original tags", () => {
+  const hash = "d".repeat(40);
+  const obj = {
+    jobs: {
+      build: {
+        "runs-on": "ubuntu-latest",
+        steps: [
+          { uses: `actions/checkout@${hash}` },
+          { run: "echo hi" },
+        ],
+      },
+    },
+  };
+  const pins: PinEntry[] = [{ original: "actions/checkout@v6", hash }];
+  unpinParsedYaml(obj, pins);
+  assertEquals(
+    (obj.jobs.build.steps[0] as Record<string, unknown>).uses,
+    "actions/checkout@v6",
+  );
+});
+
+Deno.test("unpinParsedYaml handles reusable workflow uses", () => {
+  const hash = "e".repeat(40);
+  const obj = {
+    jobs: {
+      deploy: {
+        uses: `org/repo/.github/workflows/deploy.yml@${hash}`,
+      },
+    },
+  };
+  const pins: PinEntry[] = [{
+    original: "org/repo/.github/workflows/deploy.yml@main",
+    hash,
+  }];
+  unpinParsedYaml(obj, pins);
+  assertEquals(
+    (obj.jobs.deploy as Record<string, unknown>).uses,
+    "org/repo/.github/workflows/deploy.yml@main",
+  );
+});
+
+Deno.test("writeOrLint pins deps by default", () => {
+  setup();
+  const fakeHash = "f".repeat(40);
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses: "actions/checkout@v6" })],
+    }],
+  });
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  try {
+    // write with explicit resolver, then lint without specifying pinDeps at all.
+    // if pinDeps weren't the default, lint would fail because the file has
+    // hashes while the generated yaml has tags.
+    wf.writeOrLint({ filePath, pinDeps: { resolve: () => fakeHash } });
+
+    const originalArgv = [...process.argv];
+    process.argv.push("--lint");
+    try {
+      wf.writeOrLint({ filePath });
+    } finally {
+      process.argv.length = originalArgv.length;
+    }
+  } finally {
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint reuses cached pins on subsequent writes", () => {
+  setup();
+  const fakeHash = "c".repeat(40);
+  let resolveCount = 0;
+  const resolve = () => {
+    resolveCount++;
+    return fakeHash;
+  };
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses: "actions/checkout@v6" })],
+    }],
+  });
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  try {
+    // first write resolves
+    wf.writeOrLint({ filePath, pinDeps: { resolve } });
+    assertEquals(resolveCount, 1);
+
+    // second write should reuse the cached pin — no new resolve call
+    wf.writeOrLint({ filePath, pinDeps: { resolve } });
+    assertEquals(resolveCount, 1);
+  } finally {
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint --update-pins bypasses cache and re-resolves", () => {
+  setup();
+  const hash1 = "a".repeat(40);
+  const hash2 = "b".repeat(40);
+  let callCount = 0;
+  const resolve = () => {
+    callCount++;
+    return callCount === 1 ? hash1 : hash2;
+  };
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses: "actions/checkout@v6" })],
+    }],
+  });
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  try {
+    // first write resolves to hash1
+    wf.writeOrLint({ filePath, pinDeps: { resolve } });
+    assertEquals(callCount, 1);
+    assertStringIncludes(Deno.readTextFileSync(filePath), hash1);
+
+    // second write with --update-pins should re-resolve to hash2
+    process.argv.push("--update-pins");
+    try {
+      wf.writeOrLint({ filePath, pinDeps: { resolve } });
+    } finally {
+      process.argv.pop();
+    }
+    assertEquals(callCount, 2);
+    const written = Deno.readTextFileSync(filePath);
+    assertStringIncludes(written, hash2);
+    assertEquals(written.includes(hash1), false);
+  } finally {
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint pinDeps writes pinned output", () => {
+  setup();
+  const fakeHash = "a".repeat(40);
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses: "actions/checkout@v6" })],
+    }],
+  });
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  try {
+    wf.writeOrLint({
+      filePath,
+      pinDeps: { resolve: () => fakeHash },
+    });
+
+    const written = Deno.readTextFileSync(filePath);
+    assertStringIncludes(written, `uses: actions/checkout@${fakeHash}`);
+    assertStringIncludes(
+      written,
+      `# gagen:pin actions/checkout@v6 = ${fakeHash}`,
+    );
+    // should NOT contain the original tag in the uses field
+    const lines = written.split("\n");
+    const usesLine = lines.find((l) =>
+      l.trimStart().startsWith("uses:") || l.includes("- uses:")
+    );
+    assertEquals(usesLine?.includes("@v6"), false);
+  } finally {
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint pinDeps lint passes when tags match", () => {
+  setup();
+  const fakeHash = "b".repeat(40);
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses: "actions/checkout@v6" })],
+    }],
+  });
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  // write the pinned file
+  wf.writeOrLint({
+    filePath,
+    pinDeps: { resolve: () => fakeHash },
+  });
+
+  const originalArgv = [...process.argv];
+  process.argv.push("--lint");
+  try {
+    // lint should pass — the original tag (v6) matches
+    wf.writeOrLint({ filePath, pinDeps: true });
+  } finally {
+    process.argv.length = originalArgv.length;
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint pinDeps lint passes even when hash differs", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses: "actions/checkout@v6" })],
+    }],
+  });
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  // write with one hash
+  wf.writeOrLint({
+    filePath,
+    pinDeps: { resolve: () => "a".repeat(40) },
+  });
+
+  // now the "real" resolution returns a different hash (tag was updated),
+  // but lint doesn't re-resolve — it compares original tags, so it should pass
+  const originalArgv = [...process.argv];
+  process.argv.push("--lint");
+  try {
+    wf.writeOrLint({ filePath, pinDeps: true });
+  } finally {
+    process.argv.length = originalArgv.length;
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
 });

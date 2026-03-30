@@ -10,6 +10,9 @@ that automatically resolves step ordering and propagates conditions. The
 condition propagation helps skip unnecessary setup steps and eliminates needing
 to repeat condition text over and over again.
 
+Additionally, gagen automatically pins dependencies in the output so your
+initial code is more easily maintainable.
+
 ## Basic usage
 
 ```ts
@@ -70,6 +73,39 @@ date:
 const lintStep = step({
   name: "Lint CI generation",
   run: "./.github/workflows/ci.generate.ts --lint",
+});
+```
+
+## Dependency pinning
+
+By default, `writeOrLint` pins action references to their resolved commit
+hashes. A `uses` value like `actions/checkout@v6` becomes
+`actions/checkout@<sha>` in the output, with a mapping comment appended to the
+file so that the original tag is preserved:
+
+```yaml
+steps:
+  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+```
+
+To force re-resolving all pins, run with the `--update-pins` flag:
+
+```sh
+./ci.generate.ts --update-pins
+```
+
+Pinning can be disabled by setting `pinDeps` to `false`:
+
+```ts
+wf.writeOrLint({ filePath, pinDeps: false });
+```
+
+A custom resolver can also be provided:
+
+```ts
+wf.writeOrLint({
+  filePath,
+  pinDeps: { resolve: (owner, repo, ref) => lookupHash(owner, repo, ref) },
 });
 ```
 
