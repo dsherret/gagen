@@ -78,12 +78,10 @@ const lintStep = step({
 
 ## Dependency pinning—the output is a lockfile
 
-By default, `writeOrLint` pins action references to their resolved commit
-hashes. A `uses` value like `actions/checkout@v6` becomes
-`actions/checkout@<sha>` in the output, with a mapping comment appended to the
-file so that the original tag is preserved.
+By default, `writeOrLint` pins action references to their resolved commit hashes
+then stores that hash value locked in the output.
 
-You write:
+For example, if you write the following step in a workflow:
 
 <!-- deno-fmt-ignore -->
 
@@ -93,13 +91,16 @@ step({
 })
 ```
 
-It outputs:
+It will output:
 
 ```yaml
 steps:
   - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 # gagen:pin actions/checkout@v6 = 11bd71901bbe5b1630ceea73d27597364c9af683
 ```
+
+Then the next time it runs, it will read the output to get a locked set of
+dependencies.
 
 To force re-resolving all pins, run with the `--update-pins` flag:
 
