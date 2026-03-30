@@ -76,12 +76,24 @@ const lintStep = step({
 });
 ```
 
-## Dependency pinning
+## Dependency pinning—the output is a lockfile
 
 By default, `writeOrLint` pins action references to their resolved commit
 hashes. A `uses` value like `actions/checkout@v6` becomes
 `actions/checkout@<sha>` in the output, with a mapping comment appended to the
-file so that the original tag is preserved:
+file so that the original tag is preserved.
+
+You write:
+
+<!-- deno-fmt-ignore -->
+
+```ts
+step({
+  uses: "actions/checkout@v6",
+})
+```
+
+It outputs:
 
 ```yaml
 steps:
