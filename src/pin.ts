@@ -130,7 +130,10 @@ export function pinYamlContent(
 /** Formats pin entries as comments to append to the file. */
 export function formatPinComments(pins: PinEntry[]): string {
   if (pins.length === 0) return "";
-  const lines = pins.map((p) => `# gagen:pin ${p.original} = ${p.hash}`);
+  const sorted = [...pins].sort((a, b) =>
+    a.original < b.original ? -1 : a.original > b.original ? 1 : 0
+  );
+  const lines = sorted.map((p) => `# gagen:pin ${p.original} = ${p.hash}`);
   return "\n" + lines.join("\n") + "\n";
 }
 
