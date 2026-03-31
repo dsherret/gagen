@@ -5189,6 +5189,45 @@ Deno.test("pinYamlContent skips already-pinned SHA refs", () => {
   assertStringIncludes(content, `uses: actions/checkout@${existingHash}`);
 });
 
+Deno.test("pinYamlContent preserves pins on second run with cache", () => {
+  const hash = "a".repeat(40);
+  // simulate second run: uses already has the hash, and cache has the pin
+  const yaml = `jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${hash}
+`;
+  const cache: PinEntry[] = [{ original: "actions/checkout@v6", hash }];
+  const resolve = () => {
+    throw new Error("should not be called");
+  };
+  const { content, pins } = pinYamlContent(yaml, resolve, cache);
+  assertEquals(pins.length, 1);
+  assertEquals(pins[0].original, "actions/checkout@v6");
+  assertEquals(pins[0].hash, hash);
+  assertStringIncludes(content, `uses: actions/checkout@${hash}`);
+});
+
+Deno.test("pinYamlContent uses cache and still emits pins", () => {
+  const hash = "b".repeat(40);
+  const yaml = `jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+`;
+  const cache: PinEntry[] = [{ original: "actions/checkout@v6", hash }];
+  const resolve = () => {
+    throw new Error("should not be called — cache should be used");
+  };
+  const { content, pins } = pinYamlContent(yaml, resolve, cache);
+  assertStringIncludes(content, `uses: actions/checkout@${hash}`);
+  assertEquals(pins.length, 1);
+  assertEquals(pins[0].original, "actions/checkout@v6");
+  assertEquals(pins[0].hash, hash);
+});
+
 Deno.test("pinYamlContent deduplicates same action used twice", () => {
   const yaml = `jobs:
   a:
