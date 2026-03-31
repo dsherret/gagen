@@ -89,12 +89,33 @@ export function pinYamlContent(
     (_match, prefix: string, usesValue: string) => {
       const trimmed = usesValue.trim();
       const parsed = parseActionUses(trimmed);
-      if (!parsed || isCommitHash(parsed.ref)) return `${prefix}${usesValue}`;
+      if (!parsed) return `${prefix}${usesValue}`;
+      if (isCommitHash(parsed.ref)) {
+        // already pinned — preserve the existing pin entry from cache
+        if (cache) {
+          for (const entry of cache) {
+            const ep = parseActionUses(entry.original);
+            if (
+              ep &&
+              `${ep.owner}/${ep.repo}` === `${parsed.owner}/${parsed.repo}` &&
+              entry.hash === parsed.ref
+            ) {
+              if (!pins.some((p) => p.original === entry.original)) {
+                pins.push(entry);
+              }
+              break;
+            }
+          }
+        }
+        return `${prefix}${usesValue}`;
+      }
 
       let hash = seen.get(trimmed);
       if (!hash) {
         hash = resolve(parsed.owner, parsed.repo, parsed.ref);
         seen.set(trimmed, hash);
+      }
+      if (!pins.some((p) => p.original === trimmed)) {
         pins.push({ original: trimmed, hash });
       }
 
@@ -109,7 +130,10 @@ export function pinYamlContent(
 /** Formats pin entries as comments to append to the file. */
 export function formatPinComments(pins: PinEntry[]): string {
   if (pins.length === 0) return "";
-  const lines = pins.map((p) => `# gagen:pin ${p.original} = ${p.hash}`);
+  const sorted = [...pins].sort((a, b) =>
+    a.original < b.original ? -1 : a.original > b.original ? 1 : 0
+  );
+  const lines = sorted.map((p) => `# gagen:pin ${p.original} = ${p.hash}`);
   return "\n" + lines.join("\n") + "\n";
 }
 
