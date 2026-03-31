@@ -220,6 +220,36 @@ jobs:
   );
 });
 
+Deno.test("on as string array", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "ci",
+    on: ["push", "pull_request"],
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        steps: [step({ name: "Test", run: "echo test" })],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: ci
+on:
+  - push
+  - pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: echo test
+`,
+  );
+});
+
 // --- transitive dependency resolution ---
 
 Deno.test("transitive deps are resolved", () => {

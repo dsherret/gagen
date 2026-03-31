@@ -59,7 +59,7 @@ export interface WorkflowTriggers {
 export interface WorkflowConfig {
   name: string;
   runName?: string;
-  on: WorkflowTriggers;
+  on: WorkflowTriggers | string[];
   permissions?: Permissions;
   concurrency?: { group: string; cancelInProgress?: boolean | string };
   env?: Record<string, ConfigValue>;
@@ -101,7 +101,9 @@ export class Workflow {
       obj["run-name"] = this.#config.runName;
     }
 
-    obj.on = serializeTriggers(this.#config.on);
+    obj.on = Array.isArray(this.#config.on)
+      ? this.#config.on
+      : serializeTriggers(this.#config.on);
 
     if (this.#config.permissions != null) {
       obj.permissions = this.#config.permissions;
