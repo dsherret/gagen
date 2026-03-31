@@ -49,7 +49,7 @@ const lint = step
 // only specify the leaf steps — the other steps are pulled in automatically
 createWorkflow({
   name: "ci",
-  on: { push: { branches: ["main"] } },
+  on: ["push", "pull_request"],
   jobs: [{
     id: "build",
     runsOn: "ubuntu-latest",
@@ -308,7 +308,7 @@ const preBuild = job("pre_build", {
 // automatically adds needs: [pre_build] to this job
 const wf = createWorkflow({
   name: "ci",
-  on: { push: { branches: ["main"] } },
+  on: ["push", "pull_request"],
   jobs: [
     preBuild,
     {
@@ -443,14 +443,14 @@ import { createWorkflow } from "jsr:@david/gagen@<version>";
 
 const wf = createWorkflow({
   name: "ci",
-  on: { push: { branches: ["main"] } },
+  on: ["push", "pull_request"],
   permissions: { contents: "read", packages: "write" },
 });
 
 // or use a scalar value
 const wf2 = createWorkflow({
   name: "ci",
-  on: { push: { branches: ["main"] } },
+  on: ["push", "pull_request"],
   permissions: "read-all",
 });
 
@@ -507,7 +507,7 @@ Call a reusable workflow from a job using `uses` instead of `runsOn`:
 ```ts
 const wf = createWorkflow({
   name: "CI",
-  on: { push: { branches: ["main"] } },
+  on: ["push", "pull_request"],
   jobs: [
     {
       id: "build",
@@ -547,7 +547,7 @@ const deployStep = step.dependsOn(download)({
 
 const wf = createWorkflow({
   name: "CI",
-  on: { push: { branches: ["main"] } },
+  on: ["push", "pull_request"],
   jobs: [
     { id: "build", runsOn: "ubuntu-latest", steps: [buildStep, upload] },
     // needs: [build] is inferred automatically from the artifact link
