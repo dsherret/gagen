@@ -13,6 +13,7 @@ export type {
   JobDef,
   ReusableJobConfig,
   ReusableJobDef,
+  RunsOn,
   ServiceContainer,
   StepsJobConfig,
   StepsJobDef,

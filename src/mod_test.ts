@@ -5291,6 +5291,118 @@ Deno.test("unpinParsedYaml handles reusable workflow uses", () => {
   );
 });
 
+Deno.test("runsOn supports string array", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: ["self-hosted", "linux"],
+      steps: [step({ name: "Test", run: "echo hi" })],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on:
+      - self-hosted
+      - linux
+    steps:
+      - name: Test
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("runsOn supports object with group and labels", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: { group: "my-group", labels: ["self-hosted", "linux"] },
+      steps: [step({ name: "Test", run: "echo hi" })],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on:
+      group: my-group
+      labels:
+        - self-hosted
+        - linux
+    steps:
+      - name: Test
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("runsOn supports object with only group", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: { group: "my-group" },
+      steps: [step({ name: "Test", run: "echo hi" })],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on:
+      group: my-group
+    steps:
+      - name: Test
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("runsOn supports object with string labels", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "test",
+    on: {},
+    jobs: [{
+      id: "j",
+      runsOn: { labels: "self-hosted" },
+      steps: [step({ name: "Test", run: "echo hi" })],
+    }],
+  });
+  const yaml = wf.toYamlString();
+  assertEquals(
+    yaml,
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on:
+      labels: self-hosted
+    steps:
+      - name: Test
+        run: echo hi
+`,
+  );
+});
+
 Deno.test("writeOrLint pins deps by default", () => {
   setup();
   const fakeHash = "f".repeat(40);
