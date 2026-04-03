@@ -291,25 +291,6 @@ createWorkflow({
 // checkout gets: if: matrix.job == 'test' || matrix.job == 'bench'
 ```
 
-To prevent propagation, pass the unconditional steps to `steps` as well. Leaf
-steps act as propagation barriers:
-
-```ts
-const build = step.dependsOn(checkout)({ run: "cargo build" });
-const test = step.dependsOn(build)({ run: "cargo test" });
-const linuxOnly = step.dependsOn(build, test).if(os.equals("linux"))({
-  run: "linux-specific",
-});
-
-// test is a leaf with no condition — blocks propagation to build and checkout
-createWorkflow({
-  ...,
-  jobs: [
-    { id: "test", runsOn: "ubuntu-latest", steps: [test, linuxOnly] },
-  ],
-});
-```
-
 ## Step outputs and job dependencies
 
 Steps can declare outputs. When a job references another job's outputs, the

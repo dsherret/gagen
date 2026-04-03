@@ -37,8 +37,14 @@ export interface ServiceContainer {
   options?: string;
 }
 
+export type RunsOn =
+  | string
+  | ExpressionValue
+  | readonly string[]
+  | { group?: string; labels?: string | readonly string[] };
+
 export interface StepsJobConfig extends CommonJobFields {
-  runsOn: string | ExpressionValue;
+  runsOn: RunsOn;
   strategy?: {
     matrix?: unknown;
     failFast?: boolean | ConditionLike;
@@ -556,9 +562,7 @@ export class Job implements ExpressionSource {
     }
 
     // steps-based job
-    result["runs-on"] = config.runsOn instanceof ExpressionValue
-      ? config.runsOn.toString()
-      : config.runsOn;
+    result["runs-on"] = serializeRunsOn(config.runsOn);
 
     if (config.container != null) {
       result.container = typeof config.container === "string"
@@ -1192,6 +1196,23 @@ function collectJobSourcesFromGraph(
       }
     }
   }
+}
+
+function serializeRunsOn(runsOn: RunsOn): unknown {
+  if (runsOn instanceof ExpressionValue) {
+    return runsOn.toString();
+  }
+  if (Array.isArray(runsOn)) {
+    return [...runsOn];
+  }
+  if (typeof runsOn === "object") {
+    const obj = runsOn as { group?: string; labels?: string | readonly string[] };
+    const result: Record<string, unknown> = {};
+    if (obj.group != null) result.group = obj.group;
+    if (obj.labels != null) result.labels = obj.labels;
+    return result;
+  }
+  return runsOn;
 }
 
 function serializeService(svc: ServiceContainer): Record<string, unknown> {
