@@ -1206,7 +1206,10 @@ function serializeRunsOn(runsOn: RunsOn): unknown {
     return [...runsOn];
   }
   if (typeof runsOn === "object") {
-    const obj = runsOn as { group?: string; labels?: string | readonly string[] };
+    const obj = runsOn as {
+      group?: string;
+      labels?: string | readonly string[];
+    };
     const result: Record<string, unknown> = {};
     if (obj.group != null) result.group = obj.group;
     if (obj.labels != null) result.labels = obj.labels;
