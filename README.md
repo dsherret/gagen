@@ -17,7 +17,7 @@ initial code is more easily maintainable.
 
 ```ts
 #!/usr/bin/env -S deno run --allow-read=ci.generated.yml --allow-write=ci.generated.yml
-import { conditions, createWorkflow, step } from "jsr:@david/gagen@<version>";
+import { conditions, step, workflow } from "jsr:@david/gagen@<version>";
 
 const checkout = step({
   uses: "actions/checkout@v6",
@@ -47,7 +47,7 @@ const lint = step
   );
 
 // only specify the leaf steps — the other steps are pulled in automatically
-createWorkflow({
+workflow({
   name: "ci",
   on: ["push", "pull_request"],
   jobs: [{
@@ -237,7 +237,7 @@ const runner = os.equals("linux").then("ubuntu-latest")
 // => matrix.os == 'linux' && 'ubuntu-latest' || matrix.os == 'macos' && 'macos-latest' || 'windows-latest'
 
 // use in job config
-createWorkflow({
+workflow({
   // ...,
   jobs: [
     { id: "build", runsOn: runner, steps: [test] },
@@ -262,7 +262,7 @@ const test = step.dependsOn(build).if(expr("matrix.job").equals("test"))({
 });
 
 // only test is passed — checkout and build inherit its condition
-createWorkflow({
+workflow({
   ...,
   jobs: [
     { id: "test", runsOn: "ubuntu-latest", steps: [test] },
@@ -282,7 +282,7 @@ const bench = step.dependsOn(checkout).if(jobExpr.equals("bench"))({
   run: "cargo bench",
 });
 
-createWorkflow({
+workflow({
   ...,
   jobs: [
     { id: "test", runsOn: "ubuntu-latest", steps: [test, bench] },
@@ -297,7 +297,7 @@ Steps can declare outputs. When a job references another job's outputs, the
 `needs` dependency is inferred automatically.
 
 ```ts
-import { createWorkflow, job, step } from "jsr:@david/gagen@<version>";
+import { job, step, workflow } from "jsr:@david/gagen@<version>";
 
 const checkStep = step({
   id: "check",
@@ -315,7 +315,7 @@ const preBuild = job("pre_build", {
 
 // preBuild.outputs.skip is an ExpressionValue — using it in the `if`
 // automatically adds needs: [pre_build] to this job
-const wf = createWorkflow({
+const wf = workflow({
   name: "ci",
   on: ["push", "pull_request"],
   jobs: [
@@ -344,7 +344,7 @@ const integrate = step.dependsOn(buildA, buildB)({
   run: "make all",
 });
 
-createWorkflow({
+workflow({
   ...,
   jobs: [
     { id: "ci", runsOn: "ubuntu-latest", steps: [integrate] },
@@ -371,7 +371,7 @@ const checkout = step.comesAfter(setupDeno)({ uses: "actions/checkout@v6" });
 const build = step.dependsOn(checkout)({ run: "cargo build" });
 const lint = step.dependsOn(setupDeno, checkout)({ run: "deno lint" });
 
-createWorkflow({
+workflow({
   ...,
   jobs: [
     { id: "ci", runsOn: "ubuntu-latest", steps: [build, lint] },
@@ -392,7 +392,7 @@ Error: Cycle detected in step ordering: A → B → A
 `defineMatrix()` gives you typed access to matrix values:
 
 ```ts
-import { createWorkflow, defineMatrix } from "jsr:@david/gagen@<version>";
+import { workflow, defineMatrix } from "jsr:@david/gagen@<version>";
 
 const matrix = defineMatrix({
   include: [
@@ -404,7 +404,7 @@ const matrix = defineMatrix({
 matrix.runner; // ExpressionValue("matrix.runner") — autocompletes
 matrix.foo; // TypeScript error — not a matrix key
 
-createWorkflow({
+workflow({
   ...,
   jobs: [
     {
@@ -447,23 +447,23 @@ const matrix = defineMatrix({
 Type-safe workflow and job permissions:
 
 ```ts
-import { createWorkflow } from "jsr:@david/gagen@<version>";
+import { workflow } from "jsr:@david/gagen@<version>";
 
-const wf = createWorkflow({
+const wf = workflow({
   name: "ci",
   on: ["push", "pull_request"],
   permissions: { contents: "read", packages: "write" },
 });
 
 // or use a scalar value
-const wf2 = createWorkflow({
+const wf2 = workflow({
   name: "ci",
   on: ["push", "pull_request"],
   permissions: "read-all",
 });
 
 // job-level permissions
-createWorkflow({
+workflow({
   ...,
   jobs: [
     {
@@ -485,15 +485,11 @@ Link upload and download artifact steps across jobs with automatic `needs`
 inference:
 
 ```ts
-import {
-  createWorkflow,
-  defineArtifact,
-  step,
-} from "jsr:@david/gagen@<version>";
+import { artifact, step, workflow } from "jsr:@david/gagen@<version>";
 
-const artifact = defineArtifact("build-output");
+const buildOutput = artifact("build-output");
 
-const wf = createWorkflow({
+const wf = workflow({
   name: "CI",
   on: ["push", "pull_request"],
   jobs: [
@@ -502,7 +498,7 @@ const wf = createWorkflow({
       runsOn: "ubuntu-latest",
       steps: [
         step({ name: "Build", run: "make build" }),
-        artifact.upload({ path: "dist/" }),
+        buildOutput.upload({ path: "dist/" }),
       ],
     },
     // `needs: [build]` is inferred automatically from the artifact link
@@ -510,7 +506,7 @@ const wf = createWorkflow({
       id: "deploy",
       runsOn: "ubuntu-latest",
       steps: [
-        artifact.download({ dirPath: "output/" }),
+        buildOutput.download({ dirPath: "output/" }),
         step({
           name: "Deploy",
           run: "make deploy",
@@ -527,7 +523,7 @@ optional `dirPath` (the directory to download into).
 The artifact version and default retention days can be configured:
 
 ```ts
-const artifact = defineArtifact("build-output", {
+const buildOutput = artifact("build-output", {
   version: "v3",
   retentionDays: 5,
 });
@@ -543,7 +539,7 @@ const matrix = defineMatrix({
   ],
 });
 
-createWorkflow({
+workflow({
   ...,
   jobs: [
     {

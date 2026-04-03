@@ -246,7 +246,7 @@ export function isUpdatingPins(): boolean {
   return process.argv.includes("--update-pins");
 }
 
-export function createWorkflow(config: WorkflowConfig): Workflow {
+export function workflow(config: WorkflowConfig): Workflow {
   return new Workflow(config);
 }
 

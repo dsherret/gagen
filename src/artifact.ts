@@ -62,7 +62,7 @@ export class Artifact {
   }
 }
 
-export function defineArtifact(
+export function artifact(
   name: string,
   options?: ArtifactOptions,
 ): Artifact {
