@@ -40,12 +40,15 @@ export interface WorkflowCallTrigger {
 export interface WorkflowTriggers {
   push?: {
     branches?: string[];
+    branchesIgnore?: string[];
     tags?: string[];
+    tagsIgnore?: string[];
     paths?: string[];
     pathsIgnore?: string[];
   };
   pull_request?: {
     branches?: string[];
+    branchesIgnore?: string[];
     types?: string[];
     paths?: string[];
     pathsIgnore?: string[];
@@ -255,9 +258,7 @@ function serializeTriggers(
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(triggers)) {
     if (value == null) continue;
-    if (key === "pathsIgnore") {
-      result["paths-ignore"] = value;
-    } else if (typeof value === "object" && !Array.isArray(value)) {
+    if (typeof value === "object" && !Array.isArray(value)) {
       result[key] = serializeTriggerObject(
         value as Record<string, unknown>,
       );
@@ -268,13 +269,17 @@ function serializeTriggers(
   return result;
 }
 
+function camelToKebab(key: string): string {
+  return key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+}
+
 function serializeTriggerObject(
   obj: Record<string, unknown>,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value == null) continue;
-    const yamlKey = key === "pathsIgnore" ? "paths-ignore" : key;
+    const yamlKey = camelToKebab(key);
     result[yamlKey] = value;
   }
   return result;

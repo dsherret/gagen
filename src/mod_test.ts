@@ -2666,6 +2666,73 @@ jobs:
   );
 });
 
+Deno.test("push trigger with branchesIgnore and tagsIgnore", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "test",
+    on: {
+      push: {
+        branchesIgnore: ["dependabot/**"],
+        tagsIgnore: ["nightly*"],
+      },
+    },
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [step({ name: "Test", run: "echo hi" })],
+    }],
+  });
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on:
+  push:
+    branches-ignore:
+      - dependabot/**
+    tags-ignore:
+      - nightly*
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: echo hi
+`,
+  );
+});
+
+Deno.test("pull_request trigger with branchesIgnore", () => {
+  setup();
+  const wf = createWorkflow({
+    name: "test",
+    on: {
+      pull_request: {
+        branchesIgnore: ["release/**"],
+      },
+    },
+    jobs: [{
+      id: "j",
+      runsOn: "ubuntu-latest",
+      steps: [step({ name: "Test", run: "echo hi" })],
+    }],
+  });
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on:
+  pull_request:
+    branches-ignore:
+      - release/**
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: echo hi
+`,
+  );
+});
+
 Deno.test("reusable workflow job with uses and secrets inherit", () => {
   setup();
   const build = step({ name: "Build", run: "cargo build" });
