@@ -3,15 +3,15 @@ import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { parse } from "@std/yaml/parse";
 import { stringify } from "@std/yaml/stringify";
 import {
+  artifact,
   conditions,
-  createWorkflow,
-  defineArtifact,
   defineExprObj,
   defineMatrix,
   expr,
   job,
   step,
   StepRef,
+  workflow,
 } from "./mod.ts";
 import { resolveJobId, toKebabCase } from "./job.ts";
 import { resetStepCounter } from "./step.ts";
@@ -37,7 +37,7 @@ function setup() {
 
 Deno.test("writeOrLint writes file when not linting", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [
@@ -64,7 +64,7 @@ Deno.test("writeOrLint writes file when not linting", () => {
 
 Deno.test("writeOrLint lint passes when yaml matches", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [
@@ -94,7 +94,7 @@ Deno.test("writeOrLint lint passes when yaml matches", () => {
 
 Deno.test("writeOrLint lint passes with different formatting", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [
@@ -128,7 +128,7 @@ Deno.test("writeOrLint lint passes with different formatting", () => {
 
 Deno.test("writeOrLint lint passes when file has header comment", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [
@@ -175,7 +175,7 @@ Deno.test("basic README example", () => {
     run: "cargo test",
   }).dependsOn(cargoBuild);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {
       push: { branches: ["main"] },
@@ -222,7 +222,7 @@ jobs:
 
 Deno.test("on as string array", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: ["push", "pull_request"],
     jobs: [
@@ -259,7 +259,7 @@ Deno.test("transitive deps are resolved", () => {
   const c = step({ name: "C" }).dependsOn(b);
   const d = step({ name: "D" }).dependsOn(c);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -292,7 +292,7 @@ Deno.test("diamond dependency - D appears once, before B and C", () => {
   const c = step({ name: "C" }).dependsOn(d);
   const a = step({ name: "A" }).dependsOn(b, c);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -326,7 +326,7 @@ Deno.test("step with if condition appears in YAML", () => {
     if: expr("matrix.os").equals("linux"),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -357,7 +357,7 @@ Deno.test("step with string if condition", () => {
     if: "always()",
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -398,7 +398,7 @@ Deno.test("job needs inferred from job output reference in if", () => {
   });
 
   const buildStep = step({ name: "Build", run: "cargo build" });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -445,7 +445,7 @@ Deno.test("explicit needs appear in YAML", () => {
     runsOn: "ubuntu-latest",
     steps: [step({ name: "A", run: "echo a" })],
   });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -491,7 +491,7 @@ Deno.test("step outputs create job outputs in YAML", () => {
     outputs: ["result"],
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -531,7 +531,7 @@ Deno.test("cycle detection throws with cycle path", () => {
   const bRef = b.dependsOn(a);
   const aRef = a.dependsOn(bRef);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -566,7 +566,7 @@ Deno.test("step run array is joined with newlines", () => {
     run: ["echo a", "echo b", "echo c"],
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -602,7 +602,7 @@ Deno.test("step with ExpressionValue in with field", () => {
     with: { token: ev },
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -630,7 +630,7 @@ jobs:
 
 Deno.test("job defaults serialized correctly", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -664,7 +664,7 @@ jobs:
 
 Deno.test("job timeout-minutes serialized", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -696,7 +696,7 @@ jobs:
 
 Deno.test("workflow permissions and concurrency", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: { push: { branches: ["main"] } },
     permissions: { contents: "write" },
@@ -747,7 +747,7 @@ Deno.test("condition propagates from leaf to dependencies", () => {
     if: expr("matrix.job").equals("test"),
   }).dependsOn(build);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -790,7 +790,7 @@ Deno.test("conditions OR'd when multiple dependents", () => {
     if: expr("matrix.job").equals("bench"),
   }).dependsOn(checkout);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -832,7 +832,7 @@ Deno.test("no propagation when a dependent has no condition", () => {
     run: "cargo clippy",
   }).dependsOn(checkout);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -874,7 +874,7 @@ Deno.test("condition with step output does not propagate past source", () => {
     if: build.outputs.status.equals("ok"),
   }).dependsOn(build);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -916,7 +916,7 @@ Deno.test("propagated condition ANDed with own if", () => {
     if: expr("matrix.job").equals("test"),
   }).dependsOn(build);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -956,7 +956,7 @@ Deno.test("unconditional leaf blocks propagation to shared deps", () => {
     if: expr("matrix.os").equals("linux"),
   }).dependsOn(build, test);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -997,7 +997,7 @@ Deno.test("leaf steps passed to steps do not get propagation", () => {
   }).dependsOn(a);
 
   // both are explicitly passed to steps
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1032,7 +1032,7 @@ Deno.test("defineMatrix with include serializes and provides typed expressions",
     ],
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1073,7 +1073,7 @@ Deno.test("defineMatrix with key-value arrays", () => {
     node: [18, 20],
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1130,7 +1130,7 @@ Deno.test("matrix values with Condition/ExpressionValue auto-serialize to ${{ }}
     ],
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -1176,7 +1176,7 @@ Deno.test("matrix expressions work in step conditions", () => {
     if: matrix.os.equals("linux"),
   }).dependsOn(checkout);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1219,7 +1219,7 @@ Deno.test("simple ternary with .then().else()", () => {
   const os = expr("matrix.os");
   const runner = os.equals("linux").then("ubuntu-latest").else("macos-latest");
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1252,7 +1252,7 @@ Deno.test("ternary with elseIf chain", () => {
     .elseIf(os.equals("macos")).then("macos-latest")
     .else("windows-latest");
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1290,7 +1290,7 @@ Deno.test("ternary with ExpressionValue as value", () => {
     .then(matrix.runner)
     .else("self-hosted");
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1331,7 +1331,7 @@ Deno.test("ternary with || condition gets parenthesized", () => {
     .then("unix-runner")
     .else("windows-runner");
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1376,7 +1376,7 @@ Deno.test("ternary with job output infers needs", () => {
     .then("prod-runner")
     .else("dev-runner");
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1425,7 +1425,7 @@ Deno.test("status.always() in step if", () => {
   }).dependsOn(build);
 
   // build passed as leaf to block propagation of always()
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1461,7 +1461,7 @@ Deno.test("status.failure() composed with condition", () => {
   }).dependsOn(build);
 
   // build passed as leaf to block propagation of failure()
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1496,7 +1496,7 @@ Deno.test("conditions.isTag() matches any tag", () => {
     if: isTag(),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1527,7 +1527,7 @@ Deno.test("conditions.isTag(name) matches specific tag", () => {
     if: isTag("v1.0.0"),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1558,7 +1558,7 @@ Deno.test("conditions.isBranch(name) matches specific branch", () => {
     if: isBranch("main"),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1589,7 +1589,7 @@ Deno.test("conditions.isEvent(name) matches event type", () => {
     if: isEvent("pull_request"),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1620,7 +1620,7 @@ Deno.test("conditions compose with .and()", () => {
     if: isBranch("main").and(isEvent("push")),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1659,7 +1659,7 @@ Deno.test("not() on comparison parenthesizes correctly", () => {
     if: isCross.not(),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1695,7 +1695,7 @@ Deno.test("conditions.isRunnerOs() matches runner OS", () => {
     if: isRunnerOs("Linux"),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1726,7 +1726,7 @@ Deno.test("conditions.isRunnerArch() matches runner architecture", () => {
     if: isRunnerArch("ARM64"),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1757,7 +1757,7 @@ Deno.test("conditions.isRunnerOs().not() negates correctly", () => {
     if: isRunnerOs("Windows").not(),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1788,7 +1788,7 @@ Deno.test("conditions.isRunnerOs() composes with .and()", () => {
     if: isRunnerOs("Linux").and(isRunnerArch("ARM64")),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1822,7 +1822,7 @@ Deno.test("job name accepts ExpressionValue", () => {
     ],
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1862,7 +1862,7 @@ jobs:
 
 Deno.test("toYamlString with custom header", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1894,7 +1894,7 @@ jobs:
 
 Deno.test("toYamlString with no header by default", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -1917,7 +1917,7 @@ Deno.test("step().if() applies condition to all steps", () => {
   const checkout = step({ uses: "actions/checkout@v6" });
   const build = step({ name: "Build", run: "make" }).dependsOn(checkout);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -1953,7 +1953,7 @@ Deno.test("step().if() ANDs with step condition", () => {
     if: os.equals("linux"),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -1990,7 +1990,7 @@ Deno.test("step() groups steps and dependsOn applies to all", () => {
 
   const build = step({ name: "Build", run: "cargo build" }).dependsOn(group);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2025,7 +2025,7 @@ Deno.test("step() composite with existing Step instances", () => {
 
   const build = step({ name: "Build", run: "cargo build" }).dependsOn(group);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2067,7 +2067,7 @@ Deno.test("step() composite passed directly to steps", () => {
     },
   ).dependsOn(checkout);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2099,7 +2099,7 @@ jobs:
 Deno.test("step() single config behaves as leaf step", () => {
   setup();
   const s = step({ name: "Only", run: "echo hi" });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2136,7 +2136,7 @@ Deno.test("step.if() wrapping a step() composite works", () => {
   const composite = step(checkout, build);
   // this previously crashed with "config.outputs is not iterable"
   const conditional = step.if("github.ref == 'refs/heads/main'")(composite);
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2173,7 +2173,7 @@ Deno.test("steps order is respected over creation order", () => {
   const lint = step({ name: "Lint", run: "deno lint" }).dependsOn(setupDeno);
 
   // pass build before lint — setupDeno should appear just before lint, not at the top
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2207,7 +2207,7 @@ Deno.test("steps order with independent leaf steps", () => {
   const c = step({ name: "C", run: "c" });
 
   // explicitly order: C, A, B
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2244,7 +2244,7 @@ Deno.test("composite step .if() applies condition to all steps", () => {
   ).if(conditions.isTag()).dependsOn(checkout);
 
   // pass checkout as leaf to prevent condition propagation
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2280,7 +2280,7 @@ Deno.test("composite step .if() ANDs with existing step conditions", () => {
     step({ name: "Build cross", if: isCross, run: "cross build" }),
   ).if(conditions.isTag());
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2317,7 +2317,7 @@ Deno.test("propagation deduplicates identical conditions", () => {
   const b = step({ name: "B", if: isTag, run: "b" }).dependsOn(checkout);
   const c = step({ name: "C", if: isTag, run: "c" }).dependsOn(checkout);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2360,7 +2360,7 @@ Deno.test("propagation applies absorption: A || (A && B) → A", () => {
     checkout,
   );
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2423,7 +2423,7 @@ Deno.test("propagation simplifies complex dprint-like scenario", () => {
     run: "test-release",
   }).dependsOn(setup_);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2485,7 +2485,7 @@ Deno.test("common factor extraction: (A && C) || (B && C) → C && (A || B)", ()
     checkout,
   );
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2529,7 +2529,7 @@ Deno.test("common factor extraction: (A && B && C) || (A && D && C) → A && C &
   const b = step({ name: "B", if: runTests.and(isTag).and(target2), run: "b" })
     .dependsOn(checkout);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2575,7 +2575,7 @@ Deno.test("no common factor when not all branches share a term", () => {
   );
   const c = step({ name: "C", if: isWindows, run: "c" }).dependsOn(checkout);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2613,7 +2613,7 @@ jobs:
 Deno.test("workflow_call trigger with inputs, outputs, and secrets", () => {
   setup();
   const build = step({ name: "Build", run: "cargo build" });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "Reusable Build",
     on: {
       workflow_call: {
@@ -2668,7 +2668,7 @@ jobs:
 
 Deno.test("push trigger with branchesIgnore and tagsIgnore", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {
       push: {
@@ -2703,7 +2703,7 @@ jobs:
 
 Deno.test("pull_request trigger with branchesIgnore", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {
       pull_request: {
@@ -2736,7 +2736,7 @@ jobs:
 Deno.test("reusable workflow job with uses and secrets inherit", () => {
   setup();
   const build = step({ name: "Build", run: "cargo build" });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "CI",
     on: { push: { branches: ["main"] } },
     jobs: [
@@ -2774,7 +2774,7 @@ jobs:
 
 Deno.test("reusable workflow job with object secrets", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "CI",
     on: { push: { branches: ["main"] } },
     jobs: [
@@ -2817,7 +2817,7 @@ Deno.test("reusable workflow job with needs and if", () => {
     runsOn: "ubuntu-latest",
     steps: [buildStep],
   });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "CI",
     on: { push: { branches: ["main"] } },
     jobs: [
@@ -2867,7 +2867,7 @@ Deno.test("matrix with exclude serializes correctly", () => {
     ],
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2923,7 +2923,7 @@ Deno.test("matrix exclude with include together", () => {
   // include keys are available as expressions
   assertEquals(matrix.experimental.toString(), "${{ matrix.experimental }}");
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -2992,7 +2992,7 @@ Deno.test("exclude keys don't add new matrix expression keys", () => {
 
 Deno.test("object permissions serialize as map", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: { push: { branches: ["main"] } },
     permissions: {
@@ -3032,7 +3032,7 @@ jobs:
 
 Deno.test("read-all permissions serialize as scalar string", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: { push: { branches: ["main"] } },
     permissions: "read-all",
@@ -3065,7 +3065,7 @@ jobs:
 
 Deno.test("job-level permissions serialize correctly", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: { push: { branches: ["main"] } },
     jobs: [
@@ -3102,10 +3102,10 @@ jobs:
 
 Deno.test("upload step serializes correctly", () => {
   setup();
-  const artifact = defineArtifact("build-output");
-  const upload = artifact.upload({ path: "dist/" });
+  const buildOutput = artifact("build-output");
+  const upload = buildOutput.upload({ path: "dist/" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3132,10 +3132,10 @@ jobs:
 
 Deno.test("upload step with custom retention days", () => {
   setup();
-  const artifact = defineArtifact("build-output");
-  const upload = artifact.upload({ path: "dist/", retentionDays: 5 });
+  const buildOutput = artifact("build-output");
+  const upload = buildOutput.upload({ path: "dist/", retentionDays: 5 });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3163,11 +3163,11 @@ jobs:
 
 Deno.test("download in same job doesn't add needs", () => {
   setup();
-  const artifact = defineArtifact("build-output");
-  const upload = artifact.upload({ path: "dist/" });
-  const download = artifact.download({ dirPath: "dist/" });
+  const buildOutput = artifact("build-output");
+  const upload = buildOutput.upload({ path: "dist/" });
+  const download = buildOutput.download({ dirPath: "dist/" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3199,11 +3199,11 @@ jobs:
 
 Deno.test("download in different job auto-infers needs", () => {
   setup();
-  const artifact = defineArtifact("build-output");
-  const upload = artifact.upload({ path: "dist/" });
-  const download = artifact.download({ dirPath: "dist/" });
+  const buildOutput = artifact("build-output");
+  const upload = buildOutput.upload({ path: "dist/" });
+  const download = buildOutput.download({ dirPath: "dist/" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3241,10 +3241,10 @@ jobs:
 
 Deno.test("artifact with custom version", () => {
   setup();
-  const artifact = defineArtifact("build-output", { version: "v3" });
-  const upload = artifact.upload({ path: "dist/" });
+  const buildOutput = artifact("build-output", { version: "v3" });
+  const upload = buildOutput.upload({ path: "dist/" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3271,10 +3271,10 @@ jobs:
 
 Deno.test("upload retentionDays from ArtifactOptions", () => {
   setup();
-  const artifact = defineArtifact("build-output", { retentionDays: 7 });
-  const upload = artifact.upload({ path: "dist/" });
+  const buildOutput = artifact("build-output", { retentionDays: 7 });
+  const upload = buildOutput.upload({ path: "dist/" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3302,10 +3302,10 @@ jobs:
 
 Deno.test("upload config retentionDays overrides ArtifactOptions", () => {
   setup();
-  const artifact = defineArtifact("build-output", { retentionDays: 7 });
-  const upload = artifact.upload({ path: "dist/", retentionDays: 3 });
+  const buildOutput = artifact("build-output", { retentionDays: 7 });
+  const upload = buildOutput.upload({ path: "dist/", retentionDays: 3 });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3337,7 +3337,7 @@ Deno.test("single service serializes correctly", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3383,7 +3383,7 @@ Deno.test("multiple services", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3432,7 +3432,7 @@ Deno.test("service with credentials using ExpressionValue", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3477,7 +3477,7 @@ Deno.test("service env with ExpressionValue", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3527,7 +3527,7 @@ Deno.test("container as string serializes correctly", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3559,7 +3559,7 @@ Deno.test("container with full config serializes correctly", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3605,7 +3605,7 @@ Deno.test("container with credentials using ExpressionValue", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3649,7 +3649,7 @@ Deno.test("workflow run-name serializes correctly", () => {
   setup();
   const s = step({ name: "Deploy", run: "echo deploy" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "deploy",
     runName: "Deploy to ${{ github.event.inputs.environment }}",
     on: { workflow_dispatch: {} },
@@ -3680,7 +3680,7 @@ Deno.test("workflow defaults serializes correctly", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     defaults: { run: { shell: "bash", workingDirectory: "./api" } },
@@ -3713,7 +3713,7 @@ Deno.test("steps job continue-on-error serializes correctly", () => {
   setup();
   const s = step({ name: "Test", run: "npm test" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -3744,7 +3744,7 @@ jobs:
 Deno.test("reusable job continue-on-error serializes correctly", () => {
   setup();
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [
@@ -3775,7 +3775,7 @@ Deno.test("jobs config with plain object", () => {
   const checkout = step({ uses: "actions/checkout@v6" });
   const test = step({ name: "Test", run: "cargo test" }).dependsOn(checkout);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: { push: { branches: ["main"] } },
     jobs: [
@@ -3811,7 +3811,7 @@ Deno.test("jobs config with job() instance", () => {
     steps: [test],
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [build],
@@ -3849,7 +3849,7 @@ Deno.test("job() with outputs enables cross-job references", () => {
 
   const buildStep = step({ name: "Build", run: "make build" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [
@@ -3890,7 +3890,7 @@ jobs:
 
 Deno.test("jobs config with reusable workflow", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [
@@ -3921,7 +3921,7 @@ Deno.test("job() with step().if() condition", () => {
   setup();
   const s = step({ name: "Test", run: "echo hi" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [{
@@ -3958,7 +3958,7 @@ Deno.test("toKebabCase converts name to kebab-case", () => {
 
 Deno.test("job ID derived from name via kebab-case", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [
@@ -3986,7 +3986,7 @@ jobs:
 
 Deno.test("explicit id takes precedence over name", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [
@@ -4029,7 +4029,7 @@ Deno.test("duplicate job id in array throws", () => {
   setup();
   assertThrows(
     () =>
-      createWorkflow({
+      workflow({
         name: "ci",
         on: {},
         jobs: [
@@ -4066,7 +4066,7 @@ Deno.test("comesAfter puts step after another", () => {
     checkout,
   );
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4103,7 +4103,7 @@ Deno.test("comesAfter between two independent steps", () => {
   // force A after C, despite passing order [a, b, c]
   const aRef = a.comesAfter(c);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4138,7 +4138,7 @@ Deno.test("comesAfter does not pull in steps", () => {
   // b.comesAfter(a) but only b is in the job — a should NOT be pulled in
   const bRef = b.comesAfter(a);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4169,7 +4169,7 @@ Deno.test("comesAfter conflict with dependsOn throws cycle error", () => {
   const bRef = b.dependsOn(a);
   const aRef = a.comesAfter(bRef);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4192,7 +4192,7 @@ Deno.test("comesAfter mutual constraint throws cycle error", () => {
   const aRef = a.comesAfter(b);
   const bRef = b.comesAfter(a);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4219,7 +4219,7 @@ Deno.test("comesAfter does not affect condition propagation", () => {
   // b comes after a, but a should NOT inherit b's condition
   const bRef = b.comesAfter(a);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4250,7 +4250,7 @@ Deno.test("comesAfter compatible with dependsOn (same direction)", () => {
   // redundant but compatible: b already comes after a via dependsOn
   const b = step({ name: "B" }).dependsOn(a).comesAfter(a);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4280,7 +4280,7 @@ Deno.test("comesAfter on composite step applies to all children", () => {
     { name: "Build B", run: "build-b" },
   ).comesAfter(setup_);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4310,7 +4310,7 @@ Deno.test("same step with different .if() in different jobs stays independent", 
   setup();
   const shared = step({ name: "Shared", run: "shared" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4367,7 +4367,7 @@ Deno.test("shared step in multiple conditional composites gets OR condition", ()
     { name: "Run bench", run: "cargo bench" },
   ).if(isBench);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [
@@ -4417,7 +4417,7 @@ Deno.test("step.dependsOn() puts dependency before step config", () => {
     run: "cargo build",
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4459,7 +4459,7 @@ Deno.test("step.if() puts condition before step config", () => {
     run: "deploy.sh",
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4492,7 +4492,7 @@ Deno.test("step.dependsOn().if() chains both before config", () => {
     run: "cargo build",
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4527,7 +4527,7 @@ Deno.test("step.if().dependsOn() order doesn't matter", () => {
     run: "cargo build",
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4562,7 +4562,7 @@ Deno.test("step.dependsOn() with composite steps", () => {
     { uses: "Swatinem/rust-cache@v2" },
   );
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4601,7 +4601,7 @@ Deno.test("step.dependsOn().if() with composite steps", () => {
     run: "echo done",
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4641,7 +4641,7 @@ Deno.test("step.if() ANDs multiple conditions", () => {
     run: "deploy.sh",
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4672,7 +4672,7 @@ Deno.test("step.comesAfter() prefix form", () => {
   const a = step({ name: "A", run: "a" });
   const b = step.comesAfter(a)({ name: "B", run: "b" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4696,7 +4696,7 @@ Deno.test("step.dependsOn() with multiple deps", () => {
   const b = step({ name: "B", run: "b" });
   const c = step.dependsOn(a, b)({ name: "C", run: "c" });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4725,7 +4725,7 @@ Deno.test("prefix builder result can still chain .if() for per-usage condition",
   });
 
   // Per-usage .if() on the StepRef returned by builder
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4764,7 +4764,7 @@ Deno.test("prefix .if() ANDs with config.if instead of dropping it", () => {
     if: expr("matrix.os").equals("linux"),
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4805,7 +4805,7 @@ Deno.test("prefix step.dependsOn() with config.if does not duplicate conditions 
     if: "runner.os == 'Linux'",
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4856,7 +4856,7 @@ Deno.test("step.if() wrapping a single StepRef preserves its condition", () => {
     run: "cargo build",
   });
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4889,7 +4889,7 @@ Deno.test("step.dependsOn() wrapping a single StepRef preserves its dependencies
   // b's dependency on a must be preserved
   const wrapped = step.dependsOn(c)(b);
 
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4914,7 +4914,7 @@ Deno.test("step.dependsOn() wrapping a single StepRef preserves its dependencies
 Deno.test("defineExprObj: string values serialize inline in YAML", () => {
   setup();
   const m = defineExprObj({ os: "linux" });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4943,7 +4943,7 @@ jobs:
 Deno.test("defineExprObj: boolean condition usable in step.if()", () => {
   setup();
   const m = defineExprObj({ skip: false });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -4975,7 +4975,7 @@ Deno.test("defineExprObj: mixed object end-to-end", () => {
     save_cache: true,
     runner: "ubuntu-latest",
   });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5011,7 +5011,7 @@ jobs:
 
 Deno.test("always-true condition (literal true) is omitted from step if", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5038,7 +5038,7 @@ jobs:
 Deno.test("!false is omitted as always-true", () => {
   setup();
   const m = defineExprObj({ skip: false });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5071,7 +5071,7 @@ Deno.test("always() is NOT omitted even though semantically always-true", () => 
     run: "rm -rf target",
     if: status.always(),
   }).dependsOn(build);
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5088,7 +5088,7 @@ Deno.test("always() is NOT omitted even though semantically always-true", () => 
 Deno.test("true && true is omitted as always-true", () => {
   setup();
   const m = defineExprObj({ a: true, b: true });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5115,7 +5115,7 @@ jobs:
 Deno.test("step with always-false condition is omitted from output", () => {
   setup();
   const m = defineExprObj({ os: "linux" });
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5360,7 +5360,7 @@ Deno.test("unpinParsedYaml handles reusable workflow uses", () => {
 
 Deno.test("runsOn supports string array", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5388,7 +5388,7 @@ jobs:
 
 Deno.test("runsOn supports object with group and labels", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5418,7 +5418,7 @@ jobs:
 
 Deno.test("runsOn supports object with only group", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5445,7 +5445,7 @@ jobs:
 
 Deno.test("runsOn supports object with string labels", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "test",
     on: {},
     jobs: [{
@@ -5473,7 +5473,7 @@ jobs:
 Deno.test("writeOrLint pins deps by default", () => {
   setup();
   const fakeHash = "f".repeat(40);
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [{
@@ -5512,7 +5512,7 @@ Deno.test("writeOrLint reuses cached pins on subsequent writes", () => {
     resolveCount++;
     return fakeHash;
   };
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [{
@@ -5547,7 +5547,7 @@ Deno.test("writeOrLint --update-pins bypasses cache and re-resolves", () => {
     callCount++;
     return callCount === 1 ? hash1 : hash2;
   };
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [{
@@ -5585,7 +5585,7 @@ Deno.test("writeOrLint --update-pins bypasses cache and re-resolves", () => {
 Deno.test("writeOrLint pinDeps writes pinned output", () => {
   setup();
   const fakeHash = "a".repeat(40);
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [{
@@ -5624,7 +5624,7 @@ Deno.test("writeOrLint pinDeps writes pinned output", () => {
 Deno.test("writeOrLint pinDeps lint passes when tags match", () => {
   setup();
   const fakeHash = "b".repeat(40);
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [{
@@ -5656,7 +5656,7 @@ Deno.test("writeOrLint pinDeps lint passes when tags match", () => {
 
 Deno.test("writeOrLint pinDeps lint passes even when hash differs", () => {
   setup();
-  const wf = createWorkflow({
+  const wf = workflow({
     name: "ci",
     on: {},
     jobs: [{

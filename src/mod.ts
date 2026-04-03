@@ -18,7 +18,7 @@ export type {
   StepsJobConfig,
   StepsJobDef,
 } from "./job.ts";
-export { createWorkflow, isLinting, Workflow } from "./workflow.ts";
+export { isLinting, Workflow, workflow } from "./workflow.ts";
 export type {
   WorkflowCallInput,
   WorkflowCallOutput,
@@ -64,9 +64,19 @@ export type {
   Permissions,
   PermissionScope,
 } from "./permissions.ts";
-export { Artifact, defineArtifact } from "./artifact.ts";
+export { Artifact, artifact } from "./artifact.ts";
 export type {
   ArtifactOptions,
   DownloadConfig,
   UploadConfig,
 } from "./artifact.ts";
+
+// deprecated re-exports
+
+import { workflow as workflow_ } from "./workflow.ts";
+import { artifact as artifact_ } from "./artifact.ts";
+
+/** @deprecated Use `workflow` instead. */
+export const createWorkflow: typeof workflow_ = workflow_;
+/** @deprecated Use `artifact` instead. */
+export const defineArtifact: typeof artifact_ = artifact_;
