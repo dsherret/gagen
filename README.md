@@ -104,6 +104,18 @@ const lintStep = step({
 });
 ```
 
+Alternatively, you can use the cli provided in gagen, which will lint all the
+typescript files in the `.github/workflows` folder:
+
+```ts
+const lintStep = step({
+  name: "Lint CI generation",
+  run: "npx gagen --lint",
+});
+```
+
+## CLI
+
 ## Dependency pinning—the output is a lockfile
 
 By default, `writeOrLint` pins action references to their resolved commit hashes
@@ -417,68 +429,6 @@ workflow({
 });
 ```
 
-Also works with key-value arrays:
-
-```ts
-const matrix = defineMatrix({
-  os: ["linux", "macos"],
-  node: [18, 20],
-});
-
-matrix.os.equals("linux"); // condition for use in step `if`
-```
-
-### Matrix exclude
-
-Pass an `exclude` array to remove specific combinations:
-
-```ts
-const matrix = defineMatrix({
-  os: ["linux", "macos"],
-  node: [18, 20],
-  exclude: [{ os: "macos", node: 18 }],
-});
-
-// matrix.os and matrix.node are still typed — exclude is not a key
-```
-
-## Permissions
-
-Type-safe workflow and job permissions:
-
-```ts
-import { workflow } from "jsr:@david/gagen@<version>";
-
-const wf = workflow({
-  name: "ci",
-  on: ["push", "pull_request"],
-  permissions: { contents: "read", packages: "write" },
-});
-
-// or use a scalar value
-const wf2 = workflow({
-  name: "ci",
-  on: ["push", "pull_request"],
-  permissions: "read-all",
-});
-
-// job-level permissions
-workflow({
-  ...,
-  jobs: [
-    {
-      id: "deploy",
-      runsOn: "ubuntu-latest",
-      permissions: { contents: "read", "id-token": "write" },
-      steps: [deploy],
-    },
-  ],
-});
-```
-
-Permission scopes (`contents`, `packages`, `id-token`, etc.) and levels (`read`,
-`write`, `none`) are fully typed.
-
 ## Artifacts
 
 Link upload and download artifact steps across jobs with automatic `needs`
@@ -507,10 +457,10 @@ const wf = workflow({
       runsOn: "ubuntu-latest",
       steps: [
         buildOutput.download({ dirPath: "output/" }),
-        step({
+        {
           name: "Deploy",
           run: "make deploy",
-        }),
+        },
       ],
     },
   ],
@@ -526,51 +476,5 @@ The artifact version and default retention days can be configured:
 const buildOutput = artifact("build-output", {
   version: "v3",
   retentionDays: 5,
-});
-```
-
-## Job configuration
-
-```ts
-const matrix = defineMatrix({
-  include: [
-    { runner: "ubuntu-latest" },
-    { runner: "macos-latest" },
-  ],
-});
-
-workflow({
-  ...,
-  jobs: [
-    {
-      id: "build",
-      name: "Build",
-      runsOn: matrix.runner,
-      timeoutMinutes: 60,
-      defaults: { run: { shell: "bash" } },
-      env: { CARGO_TERM_COLOR: "always" },
-      permissions: { contents: "read" },
-      concurrency: { group: "build-${{ github.ref }}", cancelInProgress: true },
-      strategy: { matrix, failFast: true },
-      steps: [test],
-    },
-  ],
-});
-```
-
-## Step configuration
-
-```ts
-step({
-  name: "Deploy",
-  id: "deploy",
-  uses: "actions/deploy@v1",
-  with: { token: "${{ secrets.GITHUB_TOKEN }}" },
-  env: { NODE_ENV: "production" },
-  if: "github.ref == 'refs/heads/main'",
-  shell: "bash",
-  workingDirectory: "./app",
-  continueOnError: true,
-  timeoutMinutes: 10,
 });
 ```

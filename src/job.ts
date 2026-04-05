@@ -10,6 +10,7 @@ import type { Permissions } from "./permissions.ts";
 import {
   type ConditionLike,
   type ConfigValue,
+  normalizeStepLike,
   serializeConditionLike,
   serializeConfigValues,
   Step,
@@ -186,13 +187,14 @@ interface DeferredAfterDep {
  * only adds ordering edges for steps already present in the graph.
  */
 function flattenStepLike(
-  item: StepLike,
+  rawItem: StepLike,
   graph: Map<Step<string>, GraphEntry>,
   isLeaf: boolean,
   leafSteps: Step<string>[],
   deferredAfterDeps: DeferredAfterDep[],
   contextCondition?: ConditionLike,
 ): Step<string>[] {
+  const item = normalizeStepLike(rawItem);
   if (item instanceof StepRef) {
     const step = item.step as Step<string>;
     // AND this StepRef's condition with the parent context

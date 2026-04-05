@@ -2,6 +2,7 @@
   "name": "@david/gagen",
   "license": "MIT",
   "tasks": {
+    "generate": "deno run -A jsr:@david/gagen",
     "build:npm": "deno run -A ./scripts/build-npm.ts"
   },
   "imports": {
@@ -9,7 +10,10 @@
     "@std/assert": "jsr:@std/assert@1",
     "@std/yaml": "jsr:@std/yaml@^1.0.11"
   },
-  "exports": "./src/mod.ts",
+  "exports": {
+    ".": "./src/mod.ts",
+    "./cli": "./src/cli.ts"
+  },
   "exclude": [
     "./npm"
   ]
