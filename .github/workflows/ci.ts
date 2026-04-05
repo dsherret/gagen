@@ -25,7 +25,10 @@ const getTagVersion = step({
 
 workflow({
   name: "ci",
-  on: ["push", "pull_request"],
+  on: {
+    push: { branches: ["main"], tags: ["*"] },
+    pull_request: { branches: ["main"] },
+  },
   concurrency: {
     group:
       "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
