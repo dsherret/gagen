@@ -74,6 +74,7 @@ workflow({
             "registry-url": "https://registry.npmjs.org",
           },
         },
+        setupDeno,
         {
           name: "npm build",
           run: `deno task build:npm ${getTagVersion.outputs.TAG_VERSION}`,

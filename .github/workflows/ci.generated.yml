@@ -5,7 +5,7 @@ on:
   - push
   - pull_request
 concurrency:
-  group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+  group: '${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}'
   cancel-in-progress: true
 jobs:
   deno:
@@ -37,7 +37,7 @@ jobs:
         with:
           deno-version: canary
       - name: Publish to JSR on tag
-        run: "deno run -A jsr:@david/publish-on-tag@0.2.0"
+        run: 'deno run -A jsr:@david/publish-on-tag@0.2.0'
   npm:
     runs-on: ubuntu-latest
     permissions:
@@ -52,9 +52,12 @@ jobs:
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version: 24.x
-          registry-url: "https://registry.npmjs.org"
+          registry-url: 'https://registry.npmjs.org'
+      - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+        with:
+          deno-version: canary
       - name: npm build
-        run: "deno task build:npm ${{ steps.get_tag_version.outputs.TAG_VERSION }}"
+        run: 'deno task build:npm ${{ steps.get_tag_version.outputs.TAG_VERSION }}'
       - name: npm publish
         if: 'startsWith(github.ref, ''refs/tags/'') && runner.os == ''Linux'''
         run: cd npm && npm publish
