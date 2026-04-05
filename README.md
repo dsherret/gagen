@@ -100,21 +100,27 @@ up to date:
 ```ts
 const lintStep = step({
   name: "Lint CI generation",
+  // alternatively, use npx gagen --lint to lint all the files
+  // in the `.github/workflows` folder
   run: "./.github/workflows/ci.ts --lint",
 });
 ```
 
-Alternatively, you can use the cli provided in gagen, which will lint all the
-typescript files in the `.github/workflows` folder:
+## CLI
 
-```ts
-const lintStep = step({
-  name: "Lint CI generation",
-  run: "npx gagen --lint",
-});
+If you store your generations scripts beside your `.yml` files in the
+`.github/workflows` folder, then you can automatically run all these scripts by
+using the `gagen` binary:
+
+```sh
+# generate the output
+npx gagen
+
+# lint the output
+npx gagen --lint
 ```
 
-## CLI
+The requires your scripts to use the `writeOrLint` function.
 
 ## Dependency pinning—the output is a lockfile
 

@@ -14,12 +14,13 @@ export async function runCli() {
     process.exit(1);
   }
 
+  const extensions = [".ts", ".js", ".mts", ".mjs", ".cts", ".cjs"];
   const tsFiles = entries
-    .filter((f) => f.endsWith(".ts"))
+    .filter((f) => extensions.some((ext) => f.endsWith(ext)))
     .sort();
 
   if (tsFiles.length === 0) {
-    console.error("No TypeScript files found in .github/workflows");
+    console.error("No script files found in .github/workflows");
     process.exit(1);
   }
 
