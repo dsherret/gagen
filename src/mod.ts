@@ -80,3 +80,8 @@ import { artifact as artifact_ } from "./artifact.ts";
 export const createWorkflow: typeof workflow_ = workflow_;
 /** @deprecated Use `artifact` instead. */
 export const defineArtifact: typeof artifact_ = artifact_;
+
+// run the cli
+if (import.meta.main) {
+  import("./cli.ts").then((mod) => mod.runCli());
+}

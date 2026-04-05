@@ -17,7 +17,7 @@ initial code is more easily maintainable.
 
 ```ts
 #!/usr/bin/env -S deno run --allow-read=ci.generated.yml --allow-write=ci.generated.yml
-import { conditions, step, workflow } from "jsr:@david/gagen@<version>";
+import { conditions, step, workflow } from "gagen";
 
 const checkout = step({
   uses: "actions/checkout@v6",
@@ -100,9 +100,27 @@ up to date:
 ```ts
 const lintStep = step({
   name: "Lint CI generation",
+  // alternatively, use `npx gagen --lint` to lint all the files
+  // in the `.github/workflows` folder
   run: "./.github/workflows/ci.ts --lint",
 });
 ```
+
+## CLI
+
+If you store your generations scripts beside your `.yml` files in the
+`.github/workflows` folder, then you can automatically run all these scripts by
+using the `gagen` binary:
+
+```sh
+# generate the output
+npx gagen
+
+# lint the output
+npx gagen --lint
+```
+
+The requires your scripts to use the `writeOrLint` function.
 
 ## Dependency pinning—the output is a lockfile
 
@@ -156,7 +174,7 @@ wf.writeOrLint({
 Build type-safe GitHub Actions expressions with a fluent API:
 
 ```ts
-import { expr } from "jsr:@david/gagen@<version>";
+import { expr } from "gagen";
 
 const ref = expr("github.ref");
 const os = expr("matrix.os");
@@ -187,7 +205,7 @@ The `conditions` object provides composable helpers for common GitHub Actions
 patterns:
 
 ```ts
-import { conditions } from "jsr:@david/gagen@<version>";
+import { conditions } from "gagen";
 
 const { status, isTag, isBranch, isEvent } = conditions;
 
@@ -297,7 +315,7 @@ Steps can declare outputs. When a job references another job's outputs, the
 `needs` dependency is inferred automatically.
 
 ```ts
-import { job, step, workflow } from "jsr:@david/gagen@<version>";
+import { job, step, workflow } from "gagen";
 
 const checkStep = step({
   id: "check",
@@ -392,7 +410,7 @@ Error: Cycle detected in step ordering: A → B → A
 `defineMatrix()` gives you typed access to matrix values:
 
 ```ts
-import { workflow, defineMatrix } from "jsr:@david/gagen@<version>";
+import { workflow, defineMatrix } from "gagen";
 
 const matrix = defineMatrix({
   include: [
@@ -417,75 +435,13 @@ workflow({
 });
 ```
 
-Also works with key-value arrays:
-
-```ts
-const matrix = defineMatrix({
-  os: ["linux", "macos"],
-  node: [18, 20],
-});
-
-matrix.os.equals("linux"); // condition for use in step `if`
-```
-
-### Matrix exclude
-
-Pass an `exclude` array to remove specific combinations:
-
-```ts
-const matrix = defineMatrix({
-  os: ["linux", "macos"],
-  node: [18, 20],
-  exclude: [{ os: "macos", node: 18 }],
-});
-
-// matrix.os and matrix.node are still typed — exclude is not a key
-```
-
-## Permissions
-
-Type-safe workflow and job permissions:
-
-```ts
-import { workflow } from "jsr:@david/gagen@<version>";
-
-const wf = workflow({
-  name: "ci",
-  on: ["push", "pull_request"],
-  permissions: { contents: "read", packages: "write" },
-});
-
-// or use a scalar value
-const wf2 = workflow({
-  name: "ci",
-  on: ["push", "pull_request"],
-  permissions: "read-all",
-});
-
-// job-level permissions
-workflow({
-  ...,
-  jobs: [
-    {
-      id: "deploy",
-      runsOn: "ubuntu-latest",
-      permissions: { contents: "read", "id-token": "write" },
-      steps: [deploy],
-    },
-  ],
-});
-```
-
-Permission scopes (`contents`, `packages`, `id-token`, etc.) and levels (`read`,
-`write`, `none`) are fully typed.
-
 ## Artifacts
 
 Link upload and download artifact steps across jobs with automatic `needs`
 inference:
 
 ```ts
-import { artifact, step, workflow } from "jsr:@david/gagen@<version>";
+import { artifact, step, workflow } from "gagen";
 
 const buildOutput = artifact("build-output");
 
@@ -507,10 +463,10 @@ const wf = workflow({
       runsOn: "ubuntu-latest",
       steps: [
         buildOutput.download({ dirPath: "output/" }),
-        step({
+        {
           name: "Deploy",
           run: "make deploy",
-        }),
+        },
       ],
     },
   ],
@@ -526,51 +482,5 @@ The artifact version and default retention days can be configured:
 const buildOutput = artifact("build-output", {
   version: "v3",
   retentionDays: 5,
-});
-```
-
-## Job configuration
-
-```ts
-const matrix = defineMatrix({
-  include: [
-    { runner: "ubuntu-latest" },
-    { runner: "macos-latest" },
-  ],
-});
-
-workflow({
-  ...,
-  jobs: [
-    {
-      id: "build",
-      name: "Build",
-      runsOn: matrix.runner,
-      timeoutMinutes: 60,
-      defaults: { run: { shell: "bash" } },
-      env: { CARGO_TERM_COLOR: "always" },
-      permissions: { contents: "read" },
-      concurrency: { group: "build-${{ github.ref }}", cancelInProgress: true },
-      strategy: { matrix, failFast: true },
-      steps: [test],
-    },
-  ],
-});
-```
-
-## Step configuration
-
-```ts
-step({
-  name: "Deploy",
-  id: "deploy",
-  uses: "actions/deploy@v1",
-  with: { token: "${{ secrets.GITHUB_TOKEN }}" },
-  env: { NODE_ENV: "production" },
-  if: "github.ref == 'refs/heads/main'",
-  shell: "bash",
-  workingDirectory: "./app",
-  continueOnError: true,
-  timeoutMinutes: 10,
 });
 ```

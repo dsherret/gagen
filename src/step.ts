@@ -32,7 +32,7 @@ export function resetStepCounter(): void {
   stepCounter = 0;
 }
 
-export type StepLike = Step<string> | StepRef<string>;
+export type StepLike = Step<string> | StepRef<string> | StepConfig;
 
 export class Step<O extends string = never> implements ExpressionSource {
   readonly #id: string;
@@ -363,9 +363,18 @@ export function serializeConfigValues(
 
 // --- helpers ---
 
+/** Normalizes a StepLike to a Step or StepRef, auto-wrapping plain objects. */
+export function normalizeStepLike(
+  item: StepLike,
+): Step<string> | StepRef<string> {
+  if (item instanceof Step || item instanceof StepRef) return item;
+  return new Step(item as StepConfig);
+}
+
 /** Extracts the underlying Step from a StepLike (Step or StepRef). */
-export function unwrapStep(item: Step<string> | StepRef<string>): Step<string> {
-  return item instanceof StepRef ? item.step : item;
+export function unwrapStep(item: StepLike): Step<string> {
+  const normalized = normalizeStepLike(item);
+  return normalized instanceof StepRef ? normalized.step : normalized;
 }
 
 /** Extracts all underlying leaf Steps from a StepLike (recursively for composites). */

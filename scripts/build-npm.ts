@@ -3,7 +3,10 @@ import { build, emptyDir } from "@deno/dnt";
 await emptyDir("./npm");
 
 await build({
-  entryPoints: ["./src/mod.ts"],
+  entryPoints: [
+    "./src/mod.ts",
+    { kind: "bin", name: "gagen", path: "./src/cli.ts" },
+  ],
   outDir: "./npm",
   typeCheck: false,
   scriptModule: false,
