@@ -24,8 +24,14 @@ export async function runCli() {
     process.exit(1);
   }
 
+  const isLinting = process.argv.includes("--lint");
   for (const file of tsFiles) {
     const fullPath = resolve(workflowsDir, file);
+    const content = fs.readFileSync(fullPath, "utf8");
+    if (!content.includes("writeOrLint")) continue;
+    const label = isLinting ? "Linting" : "Generating";
+    const color = isLinting ? "\x1b[36m" : "\x1b[32m";
+    console.error(`${color}${label}\x1b[0m ${file}`);
     await import(pathToFileURL(fullPath).href);
   }
 }
