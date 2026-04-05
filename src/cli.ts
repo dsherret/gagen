@@ -1,18 +1,16 @@
 import fs from "node:fs";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 
 export async function runCli() {
-  const workflowsDir = resolve(".github/workflows");
-
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(workflowsDir);
-  } catch {
+  const workflowsDir = findWorkflowsDir();
+  if (workflowsDir == null) {
     console.error("No .github/workflows directory found.");
     process.exit(1);
   }
+
+  const entries = fs.readdirSync(workflowsDir);
 
   const extensions = [".ts", ".js", ".mts", ".mjs", ".cts", ".cjs"];
   const tsFiles = entries
@@ -33,6 +31,17 @@ export async function runCli() {
     const color = isLinting ? "\x1b[36m" : "\x1b[32m";
     console.error(`${color}${label}\x1b[0m ${file}`);
     await import(pathToFileURL(fullPath).href);
+  }
+}
+
+function findWorkflowsDir(): string | undefined {
+  let dir = resolve(".");
+  while (true) {
+    const candidate = join(dir, ".github", "workflows");
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
   }
 }
 
