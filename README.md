@@ -17,7 +17,7 @@ initial code is more easily maintainable.
 
 ```ts
 #!/usr/bin/env -S deno run --allow-read=ci.generated.yml --allow-write=ci.generated.yml
-import { conditions, step, workflow } from "jsr:@david/gagen@<version>";
+import { conditions, step, workflow } from "gagen";
 
 const checkout = step({
   uses: "actions/checkout@v6",
@@ -100,7 +100,7 @@ up to date:
 ```ts
 const lintStep = step({
   name: "Lint CI generation",
-  // alternatively, use npx gagen --lint to lint all the files
+  // alternatively, use `npx gagen --lint` to lint all the files
   // in the `.github/workflows` folder
   run: "./.github/workflows/ci.ts --lint",
 });
@@ -174,7 +174,7 @@ wf.writeOrLint({
 Build type-safe GitHub Actions expressions with a fluent API:
 
 ```ts
-import { expr } from "jsr:@david/gagen@<version>";
+import { expr } from "gagen";
 
 const ref = expr("github.ref");
 const os = expr("matrix.os");
@@ -205,7 +205,7 @@ The `conditions` object provides composable helpers for common GitHub Actions
 patterns:
 
 ```ts
-import { conditions } from "jsr:@david/gagen@<version>";
+import { conditions } from "gagen";
 
 const { status, isTag, isBranch, isEvent } = conditions;
 
@@ -315,7 +315,7 @@ Steps can declare outputs. When a job references another job's outputs, the
 `needs` dependency is inferred automatically.
 
 ```ts
-import { job, step, workflow } from "jsr:@david/gagen@<version>";
+import { job, step, workflow } from "gagen";
 
 const checkStep = step({
   id: "check",
@@ -410,7 +410,7 @@ Error: Cycle detected in step ordering: A → B → A
 `defineMatrix()` gives you typed access to matrix values:
 
 ```ts
-import { workflow, defineMatrix } from "jsr:@david/gagen@<version>";
+import { workflow, defineMatrix } from "gagen";
 
 const matrix = defineMatrix({
   include: [
@@ -441,7 +441,7 @@ Link upload and download artifact steps across jobs with automatic `needs`
 inference:
 
 ```ts
-import { artifact, step, workflow } from "jsr:@david/gagen@<version>";
+import { artifact, step, workflow } from "gagen";
 
 const buildOutput = artifact("build-output");
 
