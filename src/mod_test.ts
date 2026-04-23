@@ -16,7 +16,6 @@ import {
 import { resolveJobId, toKebabCase } from "./job.ts";
 import { resetStepCounter } from "./step.ts";
 import {
-  formatPinComments,
   isCommitHash,
   parseActionUses,
   parsePinComments,
@@ -5189,31 +5188,45 @@ Deno.test("parseActionUses returns undefined when no @", () => {
   assertEquals(parseActionUses("actions/checkout"), undefined);
 });
 
-Deno.test("formatPinComments and parsePinComments round-trip", () => {
-  const pins: PinEntry[] = [
-    { original: "actions/checkout@v6", hash: "a".repeat(40) },
+Deno.test("parsePinComments reads inline uses comments", () => {
+  const hash = "a".repeat(40);
+  const content = `jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${hash} # v6
+      - uses: denoland/setup-deno@${"b".repeat(40)} # v2
+`;
+  assertEquals(parsePinComments(content), [
+    { original: "actions/checkout@v6", hash },
     { original: "denoland/setup-deno@v2", hash: "b".repeat(40) },
-  ];
-  const formatted = formatPinComments(pins);
-  const parsed = parsePinComments(formatted);
-  assertEquals(parsed, pins);
+  ]);
 });
 
-Deno.test("formatPinComments returns empty string for no pins", () => {
-  assertEquals(formatPinComments([]), "");
-});
-
-Deno.test("parsePinComments ignores non-pin comments", () => {
+Deno.test("parsePinComments reads legacy footer comments for back-compat", () => {
+  const hash = "a".repeat(40);
   const content = `# this is a header
 name: ci
-# gagen:pin actions/checkout@v6 = ${"a".repeat(40)}
+# gagen:pin actions/checkout@v6 = ${hash}
 # some other comment
 `;
-  const pins = parsePinComments(content);
-  assertEquals(pins, [{
-    original: "actions/checkout@v6",
-    hash: "a".repeat(40),
-  }]);
+  assertEquals(parsePinComments(content), [
+    { original: "actions/checkout@v6", hash },
+  ]);
+});
+
+Deno.test("parsePinComments deduplicates inline and footer entries", () => {
+  const hash = "a".repeat(40);
+  const content = `jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${hash} # v6
+# gagen:pin actions/checkout@v6 = ${hash}
+`;
+  assertEquals(parsePinComments(content), [
+    { original: "actions/checkout@v6", hash },
+  ]);
 });
 
 Deno.test("pinYamlContent resolves uses refs with mock resolver", () => {
@@ -5232,8 +5245,8 @@ jobs:
   const resolve = () => fakeHash;
   const { content, pins } = pinYamlContent(yaml, resolve);
 
-  assertStringIncludes(content, `uses: actions/checkout@${fakeHash}`);
-  assertStringIncludes(content, `uses: denoland/setup-deno@${fakeHash}`);
+  assertStringIncludes(content, `uses: actions/checkout@${fakeHash} # v6`);
+  assertStringIncludes(content, `uses: denoland/setup-deno@${fakeHash} # v2`);
   assertEquals(pins.length, 2);
   assertEquals(pins[0].original, "actions/checkout@v6");
   assertEquals(pins[0].hash, fakeHash);
@@ -5256,9 +5269,11 @@ Deno.test("pinYamlContent skips already-pinned SHA refs", () => {
   assertStringIncludes(content, `uses: actions/checkout@${existingHash}`);
 });
 
-Deno.test("pinYamlContent preserves pins on second run with cache", () => {
+Deno.test("pinYamlContent migrates legacy footer pins to inline on second run", () => {
   const hash = "a".repeat(40);
-  // simulate second run: uses already has the hash, and cache has the pin
+  // simulate a file written in the legacy footer convention: the `uses:`
+  // line has the hash with no inline comment, and the ref comes from cache
+  // (as parsed from the old footer format)
   const yaml = `jobs:
   j:
     runs-on: ubuntu-latest
@@ -5273,7 +5288,25 @@ Deno.test("pinYamlContent preserves pins on second run with cache", () => {
   assertEquals(pins.length, 1);
   assertEquals(pins[0].original, "actions/checkout@v6");
   assertEquals(pins[0].hash, hash);
-  assertStringIncludes(content, `uses: actions/checkout@${hash}`);
+  assertStringIncludes(content, `uses: actions/checkout@${hash} # v6`);
+});
+
+Deno.test("pinYamlContent preserves pins on second run via inline comment", () => {
+  const hash = "a".repeat(40);
+  // simulate a file already written in the inline convention — no cache
+  // needed, the ref is recovered from the inline comment
+  const yaml = `jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${hash} # v6
+`;
+  const resolve = () => {
+    throw new Error("should not be called");
+  };
+  const { content, pins } = pinYamlContent(yaml, resolve);
+  assertEquals(pins, [{ original: "actions/checkout@v6", hash }]);
+  assertStringIncludes(content, `uses: actions/checkout@${hash} # v6`);
 });
 
 Deno.test("pinYamlContent uses cache and still emits pins", () => {
@@ -5605,12 +5638,11 @@ Deno.test("writeOrLint pinDeps writes pinned output", () => {
     });
 
     const written = Deno.readTextFileSync(filePath);
-    assertStringIncludes(written, `uses: actions/checkout@${fakeHash}`);
     assertStringIncludes(
       written,
-      `# gagen:pin actions/checkout@v6 = ${fakeHash}`,
+      `uses: actions/checkout@${fakeHash} # v6`,
     );
-    // should NOT contain the original tag in the uses field
+    // should NOT contain the original tag in the uses ref position
     const lines = written.split("\n");
     const usesLine = lines.find((l) =>
       l.trimStart().startsWith("uses:") || l.includes("- uses:")
@@ -5677,6 +5709,47 @@ Deno.test("writeOrLint pinDeps lint passes even when hash differs", () => {
 
   // now the "real" resolution returns a different hash (tag was updated),
   // but lint doesn't re-resolve — it compares original tags, so it should pass
+  const originalArgv = [...process.argv];
+  process.argv.push("--lint");
+  try {
+    wf.writeOrLint({ filePath, pinDeps: true });
+  } finally {
+    process.argv.length = originalArgv.length;
+    Deno.removeSync(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint pinDeps lint passes on legacy footer format", () => {
+  setup();
+  const hash = "a".repeat(40);
+  const wf = workflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses: "actions/checkout@v6" })],
+    }],
+  });
+
+  const tmpDir = Deno.makeTempDirSync();
+  const filePath = new URL(`file://${tmpDir}/ci.yml`);
+
+  // hand-write a file in the legacy footer format (pre-inline-comment
+  // convention). lint must still accept it so existing generated files
+  // don't break until their next regeneration.
+  const legacyContent = `name: ci
+on: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${hash}
+
+# gagen:pin actions/checkout@v6 = ${hash}
+`;
+  Deno.writeTextFileSync(filePath, legacyContent);
+
   const originalArgv = [...process.argv];
   process.argv.push("--lint");
   try {

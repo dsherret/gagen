@@ -76,20 +76,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Clippy
         if: github.ref != 'refs/heads/main'
         run: cargo clippy
-      - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+      - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2
         if: github.ref != 'refs/heads/main'
       - name: Deno Lint
         if: github.ref != 'refs/heads/main'
         run: deno lint
       - name: Test
         run: cargo test
-
-# gagen:pin actions/checkout@v6 = de0fac2e4500dabe0009e67214ff5f5447ce83dd
-# gagen:pin denoland/setup-deno@v2 = 667a34cdef165d8d2b2e98dde39547c9daac7282
 ```
 
 When run normally, this writes `ci.generated.yml`. When run with `--lint`, it
@@ -141,9 +138,11 @@ It will output:
 
 ```yaml
 steps:
-  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-# gagen:pin actions/checkout@v6 = 11bd71901bbe5b1630ceea73d27597364c9af683
+  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
 ```
+
+The inline comment records the original ref so gagen can re-resolve it when you
+run with `--update-pins`.
 
 Then the next time it runs, it will read the output to get a locked set of
 dependencies.
