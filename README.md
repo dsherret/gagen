@@ -136,17 +136,17 @@ Dependabot updates the inline version comment on each `uses:` line of the
 generated YAML (e.g. `actions/checkout@<new-hash> # v7`). The source script
 still reads `v6`, so the next regeneration would revert the bump. Running
 `npx gagen --pull-versions` scans every YAML in `.github/workflows`, collects
-the current version for each action, then rewrites `"owner/repo@<old>"`
-literals in the script files to match. Run `npx gagen` afterwards to refresh
-the hashes.
+the current version for each action, then rewrites `"owner/repo@<old>"` literals
+in the script files to match. The YAML is already up to date, so no regeneration
+is needed.
 
 Limitations:
 
 - Only literal `"owner/repo@ref"` strings (double or single quoted) are
-  rewritten. Template literals with substitutions and computed uses values
-  are left alone.
-- If the same action appears in multiple YAML files with different versions,
-  it is reported as a conflict and skipped — resolve it manually.
+  rewritten. Template literals with substitutions and computed uses values are
+  left alone.
+- If the same action appears in multiple YAML files with different versions, it
+  is reported as a conflict and skipped — resolve it manually.
 
 ## Dependency pinning—the output is a lockfile
 
