@@ -16,11 +16,13 @@ import {
 import { resolveJobId, toKebabCase } from "./job.ts";
 import { resetStepCounter } from "./step.ts";
 import {
+  collectActionVersions,
   isCommitHash,
   parseActionUses,
   parsePinComments,
   type PinEntry,
   pinYamlContent,
+  pullVersionsInSource,
   unpinParsedYaml,
 } from "./pin.ts";
 
@@ -5348,6 +5350,109 @@ Deno.test("pinYamlContent deduplicates same action used twice", () => {
   const { pins } = pinYamlContent(yaml, resolve);
   assertEquals(callCount, 1);
   assertEquals(pins.length, 1);
+});
+
+Deno.test("collectActionVersions groups unique versions across yaml files", () => {
+  const yaml1 = `jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${"a".repeat(40)} # v6
+      - uses: denoland/setup-deno@${"b".repeat(40)} # v2
+`;
+  const yaml2 = `jobs:
+  b:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${"a".repeat(40)} # v6
+`;
+  const { versions, conflicts } = collectActionVersions([yaml1, yaml2]);
+  assertEquals(versions.get("actions/checkout"), "v6");
+  assertEquals(versions.get("denoland/setup-deno"), "v2");
+  assertEquals(conflicts.size, 0);
+});
+
+Deno.test("collectActionVersions reports conflicts when versions disagree", () => {
+  const yaml1 = `jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${"a".repeat(40)} # v6
+`;
+  const yaml2 = `jobs:
+  b:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${"c".repeat(40)} # v7
+`;
+  const { versions, conflicts } = collectActionVersions([yaml1, yaml2]);
+  assertEquals(versions.has("actions/checkout"), false);
+  assertEquals(conflicts.get("actions/checkout")?.sort(), ["v6", "v7"]);
+});
+
+Deno.test("collectActionVersions handles actions/repo/path form", () => {
+  const yaml = `jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/aws/cli@${"a".repeat(40)} # v1
+`;
+  const { versions } = collectActionVersions([yaml]);
+  assertEquals(versions.get("actions/aws/cli"), "v1");
+});
+
+Deno.test("pullVersionsInSource rewrites double-quoted uses literals", () => {
+  const source = `const checkout = step({ uses: "actions/checkout@v6" });
+const deno = step({ uses: "denoland/setup-deno@v2" });`;
+  const versions = new Map([
+    ["actions/checkout", "v7"],
+    ["denoland/setup-deno", "v2"],
+  ]);
+  const { content, changes } = pullVersionsInSource(source, versions);
+  assertStringIncludes(content, `"actions/checkout@v7"`);
+  assertStringIncludes(content, `"denoland/setup-deno@v2"`);
+  assertEquals(changes, [{
+    action: "actions/checkout",
+    from: "v6",
+    to: "v7",
+  }]);
+});
+
+Deno.test("pullVersionsInSource rewrites single-quoted uses literals", () => {
+  const source = `step({ uses: 'actions/checkout@v6' });`;
+  const versions = new Map([["actions/checkout", "v7"]]);
+  const { content, changes } = pullVersionsInSource(source, versions);
+  assertStringIncludes(content, `'actions/checkout@v7'`);
+  assertEquals(changes.length, 1);
+});
+
+Deno.test("pullVersionsInSource skips actions not in version map", () => {
+  const source = `step({ uses: "actions/checkout@v6" });
+step({ uses: "unlisted/action@v1" });`;
+  const versions = new Map([["actions/checkout", "v7"]]);
+  const { content, changes } = pullVersionsInSource(source, versions);
+  assertStringIncludes(content, `"actions/checkout@v7"`);
+  assertStringIncludes(content, `"unlisted/action@v1"`);
+  assertEquals(changes.length, 1);
+});
+
+Deno.test("pullVersionsInSource is a no-op when versions already match", () => {
+  const source = `step({ uses: "actions/checkout@v6" });`;
+  const versions = new Map([["actions/checkout", "v6"]]);
+  const { content, changes } = pullVersionsInSource(source, versions);
+  assertEquals(content, source);
+  assertEquals(changes.length, 0);
+});
+
+Deno.test("pullVersionsInSource leaves non-string uses references alone", () => {
+  // template literals with substitutions and variable-based uses strings
+  // aren't matched by the regex — documented limitation
+  const source =
+    "const ref = getRef(); step({ uses: `actions/checkout@${ref}` });";
+  const versions = new Map([["actions/checkout", "v7"]]);
+  const { content, changes } = pullVersionsInSource(source, versions);
+  assertEquals(content, source);
+  assertEquals(changes.length, 0);
 });
 
 Deno.test("unpinParsedYaml replaces hashes with original tags", () => {
