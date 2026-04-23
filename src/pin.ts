@@ -70,81 +70,104 @@ export type RefResolver = (
   ref: string,
 ) => string;
 
-/** Resolves non-SHA refs in YAML content to commit hashes. */
+/**
+ * Resolves non-SHA refs in YAML content to commit hashes, writing the
+ * original ref as an inline comment after the pinned `uses:` value.
+ */
 export function pinYamlContent(
   yamlStr: string,
   resolve: RefResolver = resolveRef,
   cache?: readonly PinEntry[],
 ): { content: string; pins: PinEntry[] } {
   const pins: PinEntry[] = [];
-  const seen = new Map<string, string>();
+  const resolved = new Map<string, string>();
   if (cache) {
     for (const entry of cache) {
-      seen.set(entry.original, entry.hash);
+      resolved.set(entry.original, entry.hash);
     }
   }
 
   const content = yamlStr.replace(
-    /^(\s+(?:-\s+)?uses:\s+)(.+)$/gm,
-    (_match, prefix: string, usesValue: string) => {
-      const trimmed = usesValue.trim();
-      const parsed = parseActionUses(trimmed);
-      if (!parsed) return `${prefix}${usesValue}`;
+    /^(\s+(?:-\s+)?uses:\s+)(\S+)([^\n]*)$/gm,
+    (_match, prefix: string, usesValue: string, rest: string) => {
+      const parsed = parseActionUses(usesValue);
+      if (!parsed) return `${prefix}${usesValue}${rest}`;
+
       if (isCommitHash(parsed.ref)) {
-        // already pinned — preserve the existing pin entry from cache
-        if (cache) {
+        // already pinned — recover the original ref from an inline comment
+        // or, failing that, from the legacy footer entries in the cache
+        const actionPath = usesValue.substring(0, usesValue.lastIndexOf("@"));
+        let originalRef: string | undefined;
+
+        const inlineMatch = rest.match(/^\s*#\s*(\S+)/);
+        if (inlineMatch) {
+          originalRef = inlineMatch[1];
+        } else if (cache) {
           for (const entry of cache) {
             const ep = parseActionUses(entry.original);
             if (
               ep &&
               `${ep.owner}/${ep.repo}` === `${parsed.owner}/${parsed.repo}` &&
+              ep.path === parsed.path &&
               entry.hash === parsed.ref
             ) {
-              if (!pins.some((p) => p.original === entry.original)) {
-                pins.push(entry);
-              }
+              originalRef = ep.ref;
               break;
             }
           }
         }
-        return `${prefix}${usesValue}`;
+
+        if (!originalRef) return `${prefix}${usesValue}${rest}`;
+
+        const original = `${actionPath}@${originalRef}`;
+        if (!pins.some((p) => p.original === original)) {
+          pins.push({ original, hash: parsed.ref });
+        }
+        return `${prefix}${usesValue} # ${originalRef}`;
       }
 
-      let hash = seen.get(trimmed);
+      let hash = resolved.get(usesValue);
       if (!hash) {
         hash = resolve(parsed.owner, parsed.repo, parsed.ref);
-        seen.set(trimmed, hash);
+        resolved.set(usesValue, hash);
       }
-      if (!pins.some((p) => p.original === trimmed)) {
-        pins.push({ original: trimmed, hash });
+      if (!pins.some((p) => p.original === usesValue)) {
+        pins.push({ original: usesValue, hash });
       }
 
-      const pinned = trimmed.replace(`@${parsed.ref}`, `@${hash}`);
-      return `${prefix}${pinned}`;
+      const actionPath = usesValue.substring(0, usesValue.lastIndexOf("@"));
+      return `${prefix}${actionPath}@${hash} # ${parsed.ref}`;
     },
   );
 
   return { content, pins };
 }
 
-/** Formats pin entries as comments to append to the file. */
-export function formatPinComments(pins: PinEntry[]): string {
-  if (pins.length === 0) return "";
-  const sorted = [...pins].sort((a, b) =>
-    a.original < b.original ? -1 : a.original > b.original ? 1 : 0
-  );
-  const lines = sorted.map((p) => `# gagen:pin ${p.original} = ${p.hash}`);
-  return "\n" + lines.join("\n") + "\n";
-}
-
-/** Extracts pin entries from file content. */
+/**
+ * Extracts pin entries from file content. Reads the current inline format
+ * (`uses: owner/repo@HASH # ref`) and, for backwards compatibility, the
+ * legacy footer format (`# gagen:pin owner/repo@ref = HASH`).
+ */
 export function parsePinComments(content: string): PinEntry[] {
   const pins: PinEntry[] = [];
-  const re = /^# gagen:pin (.+) = ([0-9a-f]{40})$/gm;
-  let match;
-  while ((match = re.exec(content)) !== null) {
-    pins.push({ original: match[1], hash: match[2] });
+  const seen = new Set<string>();
+
+  const inlineRe = /^\s+(?:-\s+)?uses:\s+(\S+?)@([0-9a-f]{40})\s+#\s*(\S+)/gm;
+  let m;
+  while ((m = inlineRe.exec(content)) !== null) {
+    const original = `${m[1]}@${m[3]}`;
+    if (seen.has(original)) continue;
+    seen.add(original);
+    pins.push({ original, hash: m[2] });
   }
+
+  const footerRe = /^# gagen:pin (.+) = ([0-9a-f]{40})$/gm;
+  while ((m = footerRe.exec(content)) !== null) {
+    if (seen.has(m[1])) continue;
+    seen.add(m[1]);
+    pins.push({ original: m[1], hash: m[2] });
+  }
+
   return pins;
 }
 

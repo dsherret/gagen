@@ -5,12 +5,7 @@ import { ExpressionValue } from "./expression.ts";
 import { Job, job as jobFn, type JobDef, resolveJobId } from "./job.ts";
 import type { Permissions } from "./permissions.ts";
 import type { ConfigValue, Step } from "./step.ts";
-import {
-  formatPinComments,
-  parsePinComments,
-  pinYamlContent,
-  unpinParsedYaml,
-} from "./pin.ts";
+import { parsePinComments, pinYamlContent, unpinParsedYaml } from "./pin.ts";
 import type { PinEntry, RefResolver } from "./pin.ts";
 import fs from "node:fs";
 
@@ -231,7 +226,7 @@ export class Workflow {
           }
         }
         const result = pinYamlContent(expected, resolve, cache);
-        output = result.content + formatPinComments(result.pins);
+        output = result.content;
       }
       fs.writeFileSync(options.filePath, output);
     }

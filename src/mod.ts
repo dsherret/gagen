@@ -51,7 +51,6 @@ export type {
   TernaryValue,
 } from "./expression.ts";
 export {
-  formatPinComments,
   parsePinComments,
   pinYamlContent,
   resolveRef,
