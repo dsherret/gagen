@@ -17,6 +17,7 @@ initial code is more easily maintainable.
 
 ```ts
 #!/usr/bin/env -S deno run --allow-read=ci.generated.yml --allow-write=ci.generated.yml
+// or: #!/usr/bin/env -S node
 import { conditions, step, workflow } from "gagen";
 
 const checkout = step({
@@ -115,9 +116,31 @@ npx gagen
 
 # lint the output
 npx gagen --lint
+
+# pull version bumps from generated yaml back into the source scripts
+# (useful after dependabot updates a .generated.yml)
+npx gagen --pull-versions
 ```
 
 The requires your scripts to use the `writeOrLint` function.
+
+### `--pull-versions`
+
+Dependabot updates the inline version comment on each `uses:` line of the
+generated YAML (e.g. `actions/checkout@<new-hash> # v7`). The source script
+still reads `v6`, so the next regeneration would revert the bump. Running
+`npx gagen --pull-versions` scans every YAML in `.github/workflows`, collects
+the current version for each action, then rewrites `"owner/repo@<old>"`
+literals in the script files to match. Run `npx gagen` afterwards to refresh
+the hashes.
+
+Limitations:
+
+- Only literal `"owner/repo@ref"` strings (double or single quoted) are
+  rewritten. Template literals with substitutions and computed uses values
+  are left alone.
+- If the same action appears in multiple YAML files with different versions,
+  it is reported as a conflict and skipped — resolve it manually.
 
 ## Dependency pinning—the output is a lockfile
 

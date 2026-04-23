@@ -172,6 +172,75 @@ export function parsePinComments(content: string): PinEntry[] {
 }
 
 /**
+ * Collects the pinned version for each action across a set of generated
+ * YAML files. If an action appears in multiple files with different
+ * versions, it is returned as a conflict instead — conflicts must be
+ * resolved manually since there is no single correct target version.
+ */
+export function collectActionVersions(
+  yamlContents: readonly string[],
+): {
+  versions: Map<string, string>;
+  conflicts: Map<string, string[]>;
+} {
+  const seen = new Map<string, Set<string>>();
+  for (const content of yamlContents) {
+    for (const pin of parsePinComments(content)) {
+      const parsed = parseActionUses(pin.original);
+      if (!parsed) continue;
+      const action = parsed.path
+        ? `${parsed.owner}/${parsed.repo}/${parsed.path}`
+        : `${parsed.owner}/${parsed.repo}`;
+      let set = seen.get(action);
+      if (!set) {
+        set = new Set<string>();
+        seen.set(action, set);
+      }
+      set.add(parsed.ref);
+    }
+  }
+  const versions = new Map<string, string>();
+  const conflicts = new Map<string, string[]>();
+  for (const [action, set] of seen) {
+    if (set.size === 1) {
+      versions.set(action, [...set][0]);
+    } else {
+      conflicts.set(action, [...set]);
+    }
+  }
+  return { versions, conflicts };
+}
+
+export interface VersionChange {
+  action: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * Rewrites literal `"owner/repo@<ref>"` (or single-quoted) strings in
+ * source code to use the target version from the given map. Only matches
+ * literals with a single owner/repo[/path]@ref shape; variables, template
+ * substitutions, and non-string forms are left alone.
+ */
+export function pullVersionsInSource(
+  source: string,
+  versions: ReadonlyMap<string, string>,
+): { content: string; changes: VersionChange[] } {
+  const changes: VersionChange[] = [];
+  const content = source.replace(
+    /(["'])([^"'@\s/]+\/[^"'@\s/]+(?:\/[^"'@\s]+)?)@([^"'\s]+)\1/g,
+    (match, quote: string, action: string, ref: string) => {
+      const target = versions.get(action);
+      if (!target || target === ref) return match;
+      changes.push({ action, from: ref, to: target });
+      return `${quote}${action}@${target}${quote}`;
+    },
+  );
+  return { content, changes };
+}
+
+/**
  * Replaces pinned hashes in a parsed YAML object with their original
  * tag/branch refs using the provided pin mapping.
  */

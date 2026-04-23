@@ -51,12 +51,14 @@ export type {
   TernaryValue,
 } from "./expression.ts";
 export {
+  collectActionVersions,
   parsePinComments,
   pinYamlContent,
+  pullVersionsInSource,
   resolveRef,
   unpinParsedYaml,
 } from "./pin.ts";
-export type { PinEntry, RefResolver } from "./pin.ts";
+export type { PinEntry, RefResolver, VersionChange } from "./pin.ts";
 export { defineMatrix, Matrix } from "./matrix.ts";
 export type {
   PermissionLevel,
