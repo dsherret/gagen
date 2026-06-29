@@ -92,6 +92,15 @@ interface GraphEntry {
   hasUnconditionalContext?: boolean;
 }
 
+/**
+ * An ordered unit of resolved steps: either a single step (`parallel: false`)
+ * or a parallel group whose `steps` run concurrently (`parallel: true`).
+ */
+interface ResolvedUnit {
+  parallel: boolean;
+  steps: Step<string>[];
+}
+
 function ensureEntry(
   graph: Map<Step<string>, GraphEntry>,
   step: Step<string>,
@@ -149,29 +158,78 @@ function combineAndConditions(
 }
 
 /**
- * Returns a step's config.if as a ConditionLike suitable for passing down
- * to dependencies, or undefined if it references step outputs (which would
- * create circular condition dependencies).
+ * Returns a condition suitable for passing down to dependencies, or undefined
+ * if it references step outputs (which would create circular condition
+ * dependencies — a dependency cannot be gated on an output produced by a step
+ * that runs after it).
  */
+function propagatableCondition(
+  condition: ConditionLike | undefined,
+): ConditionLike | undefined {
+  if (condition == null) return undefined;
+  if (condition instanceof Condition) {
+    for (const source of condition.sources) {
+      if (source instanceof Step) return undefined;
+    }
+  }
+  if (condition instanceof ExpressionValue) {
+    for (const source of condition.allSources) {
+      if (source instanceof Step) return undefined;
+    }
+  }
+  return condition;
+}
+
+/** Returns a step's config.if if it is safe to propagate to dependencies. */
 function propagatableConfigIf(step: Step<string>): ConditionLike | undefined {
-  const configIf = step.config.if;
-  if (configIf == null) return undefined;
-  if (configIf instanceof Condition) {
-    for (const source of configIf.sources) {
-      if (source instanceof Step) return undefined;
-    }
-  }
-  if (configIf instanceof ExpressionValue) {
-    for (const source of configIf.allSources) {
-      if (source instanceof Step) return undefined;
-    }
-  }
-  return configIf;
+  return propagatableCondition(step.config.if);
 }
 
 interface DeferredAfterDep {
   step: Step<string>;
   target: StepLike;
+}
+
+/**
+ * Tracks which leaf steps are direct concurrent members of a parallel group.
+ * A step pulled in only as a dependency is NOT a member — it is hoisted to run
+ * before the group.
+ */
+interface Membership {
+  /** member step → the parallel group composite it belongs to */
+  memberToGroup: Map<Step<string>, Step<string>>;
+  /** parallel group → its member steps, in declaration order */
+  groupMembers: Map<Step<string>, Step<string>[]>;
+}
+
+function recordMember(
+  membership: Membership,
+  group: Step<string>,
+  step: Step<string>,
+): void {
+  if (membership.memberToGroup.has(step)) return;
+  membership.memberToGroup.set(step, group);
+  let members = membership.groupMembers.get(group);
+  if (!members) {
+    members = [];
+    membership.groupMembers.set(group, members);
+  }
+  members.push(step);
+}
+
+/**
+ * Rejects a composite step used directly as a parallel group member. Members
+ * run concurrently with no ordering, so a member cannot itself be a nested
+ * parallel group or a sequential group of steps.
+ */
+function throwInvalidParallelMember(composite: Step<string>): never {
+  if (composite.kind === "parallel") {
+    throw new Error("Parallel groups cannot be nested.");
+  }
+  throw new Error(
+    "A parallel group member cannot itself be a group of steps — " +
+      "each member must be a single step.",
+  );
 }
 
 /**
@@ -192,7 +250,9 @@ function flattenStepLike(
   isLeaf: boolean,
   leafSteps: Step<string>[],
   deferredAfterDeps: DeferredAfterDep[],
+  membership: Membership,
   contextCondition?: ConditionLike,
+  parallelGroup?: Step<string>,
 ): Step<string>[] {
   const item = normalizeStepLike(rawItem);
   if (item instanceof StepRef) {
@@ -201,7 +261,10 @@ function flattenStepLike(
     const newContext = combineAndConditions(contextCondition, item.condition);
 
     if (step.children.length > 0) {
-      // StepRef wrapping composite step: recurse with combined context
+      // StepRef wrapping composite step: recurse with combined context.
+      // a parallel composite makes its children concurrent members.
+      if (parallelGroup != null) throwInvalidParallelMember(step);
+      const childGroup = step.kind === "parallel" ? step : parallelGroup;
       const contributed: Step<string>[] = [];
       for (const child of step.children) {
         contributed.push(
@@ -211,14 +274,18 @@ function flattenStepLike(
             isLeaf,
             leafSteps,
             deferredAfterDeps,
+            membership,
             newContext,
+            childGroup,
           ),
         );
       }
-      // compute aggregate dep context: newContext AND (OR of children's
+      // compute aggregate dep context: context AND (OR of children's
       // config.ifs). If any child is unconditional, or the OR is a tautology,
-      // just use newContext.
-      let compositeDepsCtx: ConditionLike | undefined = newContext;
+      // just use the context. The context is filtered so an output-referencing
+      // condition doesn't propagate to dependencies (circular dependency).
+      const depBaseCtx = propagatableCondition(newContext);
+      let compositeDepsCtx: ConditionLike | undefined = depBaseCtx;
       if (item.dependencies.length > 0) {
         const childIfs: ConditionLike[] = [];
         let allConditional = true;
@@ -235,12 +302,13 @@ function flattenStepLike(
             childIfs.map((c) => toCondition(c)),
           );
           if (orCond != null) {
-            compositeDepsCtx = combineAndConditions(newContext, orCond);
+            compositeDepsCtx = combineAndConditions(depBaseCtx, orCond);
           }
         }
       }
 
-      // apply deps once with aggregate context, add to all children's dep sets
+      // apply deps once with aggregate context, add to all children's dep sets.
+      // deps are not group members — they are hoisted to run before the group.
       for (const dep of item.dependencies) {
         const depSteps = flattenStepLike(
           dep,
@@ -248,6 +316,7 @@ function flattenStepLike(
           false,
           [],
           deferredAfterDeps,
+          membership,
           compositeDepsCtx,
         );
         for (const s of contributed) {
@@ -266,14 +335,24 @@ function flattenStepLike(
     // StepRef wrapping leaf step
     const entry = ensureEntry(graph, step);
     if (isLeaf) leafSteps.push(step);
+    if (parallelGroup) recordMember(membership, parallelGroup, step);
     applyContextCondition(entry, newContext);
-    // include step's config.if in the dep context
+    // include step's config.if in the dep context. both the context and the
+    // config.if are filtered so output-referencing conditions don't propagate
+    // to dependencies (which would create a circular condition dependency).
     const depContext = combineAndConditions(
-      newContext,
+      propagatableCondition(newContext),
       propagatableConfigIf(step),
     );
     for (const dep of item.dependencies) {
-      flattenDep(dep, entry.deps, graph, deferredAfterDeps, depContext);
+      flattenDep(
+        dep,
+        entry.deps,
+        graph,
+        deferredAfterDeps,
+        membership,
+        depContext,
+      );
     }
     for (const dep of item.afterDependencies) {
       deferredAfterDeps.push({ step, target: dep });
@@ -283,7 +362,10 @@ function flattenStepLike(
 
   // Step (leaf or composite)
   if (item.children.length > 0) {
-    // composite step: recurse into children with same context
+    // composite step: recurse into children with same context.
+    // a parallel composite makes its children concurrent members.
+    if (parallelGroup != null) throwInvalidParallelMember(item);
+    const childGroup = item.kind === "parallel" ? item : parallelGroup;
     const contributed: Step<string>[] = [];
     for (const child of item.children) {
       contributed.push(
@@ -293,7 +375,9 @@ function flattenStepLike(
           isLeaf,
           leafSteps,
           deferredAfterDeps,
+          membership,
           contextCondition,
+          childGroup,
         ),
       );
     }
@@ -303,6 +387,7 @@ function flattenStepLike(
   // leaf step
   const entry = ensureEntry(graph, item);
   if (isLeaf) leafSteps.push(item);
+  if (parallelGroup) recordMember(membership, parallelGroup, item);
   applyContextCondition(entry, contextCondition);
   return [item];
 }
@@ -313,6 +398,7 @@ function flattenDep(
   targetSet: Set<Step<string>>,
   graph: Map<Step<string>, GraphEntry>,
   deferredAfterDeps: DeferredAfterDep[],
+  membership: Membership,
   contextCondition?: ConditionLike,
 ): void {
   const steps = flattenStepLike(
@@ -321,6 +407,7 @@ function flattenDep(
     false,
     [],
     deferredAfterDeps,
+    membership,
     contextCondition,
   );
   for (const s of steps) {
@@ -368,6 +455,7 @@ export class Job implements ExpressionSource {
   // cached graph — built lazily
   #cachedGraph?: Map<Step<string>, GraphEntry>;
   #cachedLeafSteps?: Step<string>[];
+  #cachedMembership?: Membership;
 
   constructor(
     id: string,
@@ -405,17 +493,33 @@ export class Job implements ExpressionSource {
   #buildGraph(): {
     graph: Map<Step<string>, GraphEntry>;
     leafSteps: Step<string>[];
+    membership: Membership;
   } {
-    if (this.#cachedGraph && this.#cachedLeafSteps) {
-      return { graph: this.#cachedGraph, leafSteps: this.#cachedLeafSteps };
+    if (this.#cachedGraph && this.#cachedLeafSteps && this.#cachedMembership) {
+      return {
+        graph: this.#cachedGraph,
+        leafSteps: this.#cachedLeafSteps,
+        membership: this.#cachedMembership,
+      };
     }
 
     const graph = new Map<Step<string>, GraphEntry>();
     const leafSteps: Step<string>[] = [];
     const deferredAfterDeps: DeferredAfterDep[] = [];
+    const membership: Membership = {
+      memberToGroup: new Map(),
+      groupMembers: new Map(),
+    };
 
     for (const item of this.#leafItems) {
-      flattenStepLike(item, graph, true, leafSteps, deferredAfterDeps);
+      flattenStepLike(
+        item,
+        graph,
+        true,
+        leafSteps,
+        deferredAfterDeps,
+        membership,
+      );
     }
 
     addConditionSourceDeps(graph);
@@ -431,34 +535,91 @@ export class Job implements ExpressionSource {
 
     this.#cachedGraph = graph;
     this.#cachedLeafSteps = leafSteps;
-    return { graph, leafSteps };
+    this.#cachedMembership = membership;
+    return { graph, leafSteps, membership };
   }
 
   resolveSteps(): Step<string>[] {
     const { graph, leafSteps } = this.#buildGraph();
-    const allSteps = new Set(graph.keys());
+    const priority = computePriorities(graph, leafSteps);
+    return topoSort(new Set(graph.keys()), priority, graph);
+  }
 
-    // compute priority: each step gets the minimum leaf index of any
-    // leaf step that transitively depends on it (directly or via
-    // condition sources). This makes the topo sort respect steps order.
-    const priority = new Map<Step<string>, number>();
-    const assignPriority = (s: Step<string>, p: number) => {
-      const current = priority.get(s);
-      if (current !== undefined && current <= p) return;
-      priority.set(s, p);
-      const entry = graph.get(s);
-      if (!entry) return;
+  /**
+   * Resolves the job's steps into ordered units. Each unit is either a single
+   * step or a parallel group whose members run concurrently. Parallel groups
+   * are contracted to a single node for ordering, so the whole block is placed
+   * as a unit relative to its dependencies and stays contiguous in the output.
+   */
+  #resolveUnits(): ResolvedUnit[] {
+    const { graph, leafSteps, membership } = this.#buildGraph();
+    const { memberToGroup, groupMembers } = membership;
+    const priority = computePriorities(graph, leafSteps);
+
+    // representative node of a step: its parallel group, or the step itself
+    const repOf = (s: Step<string>): Step<string> => memberToGroup.get(s) ?? s;
+
+    // build a contracted graph with one node per group + each free step
+    const nodes = new Set<Step<string>>();
+    for (const s of graph.keys()) nodes.add(repOf(s));
+
+    const contracted = new Map<Step<string>, GraphEntry>();
+    for (const node of nodes) {
+      contracted.set(node, {
+        deps: new Set(),
+        afterDeps: new Set(),
+        contexts: [],
+      });
+    }
+    for (const [s, entry] of graph) {
+      const from = repOf(s);
+      const cEntry = contracted.get(from)!;
       for (const dep of entry.deps) {
-        if (allSteps.has(dep)) {
-          assignPriority(dep, p);
+        const to = repOf(dep);
+        if (to === from) {
+          if (s !== dep) {
+            throw new Error(
+              `Steps in a parallel group cannot depend on each other: ${
+                stepLabel(dep)
+              } → ${stepLabel(s)}`,
+            );
+          }
+          continue;
         }
+        cEntry.deps.add(to);
       }
-    };
-    for (let i = 0; i < leafSteps.length; i++) {
-      assignPriority(leafSteps[i], i);
+      for (const dep of entry.afterDeps) {
+        const to = repOf(dep);
+        if (to === from) {
+          if (s !== dep) {
+            throw new Error(
+              `Steps in a parallel group cannot be ordered after each other: ${
+                stepLabel(dep)
+              } → ${stepLabel(s)}`,
+            );
+          }
+          continue;
+        }
+        cEntry.afterDeps.add(to);
+      }
     }
 
-    return topoSort(allSteps, priority, graph);
+    // contracted priority = best (minimum) priority among the node's members
+    const contractedPriority = new Map<Step<string>, number>();
+    for (const [s, p] of priority) {
+      const node = repOf(s);
+      const current = contractedPriority.get(node);
+      if (current === undefined || p < current) {
+        contractedPriority.set(node, p);
+      }
+    }
+
+    return topoSort(nodes, contractedPriority, contracted).map((node) => {
+      const members = groupMembers.get(node);
+      return members
+        ? { parallel: true, steps: members }
+        : { parallel: false, steps: [node] };
+    });
   }
 
   inferNeeds(stepOwners?: Map<Step<string>, Job[]>): Job[] {
@@ -659,17 +820,30 @@ export class Job implements ExpressionSource {
 
     // steps
     const { graph } = this.#buildGraph();
-    const resolvedSteps = this.resolveSteps();
+    const units = this.#resolveUnits();
     const effectiveConditions = computeEffectiveConditions(
-      resolvedSteps,
+      units.flatMap((u) => u.steps),
       graph,
     );
-    result.steps = resolvedSteps
-      .filter((s) => {
-        const cond = effectiveConditions.get(s);
-        return cond == null || !isAlwaysFalse(cond);
-      })
-      .map((s) => s.toYaml(effectiveConditions.get(s)));
+    const isVisible = (s: Step<string>) => {
+      const cond = effectiveConditions.get(s);
+      return cond == null || !isAlwaysFalse(cond);
+    };
+    const serialize = (s: Step<string>) => s.toYaml(effectiveConditions.get(s));
+
+    const steps: unknown[] = [];
+    for (const unit of units) {
+      const visible = unit.steps.filter(isVisible);
+      if (visible.length === 0) continue;
+      // a parallel block only makes sense with more than one step; collapse a
+      // single remaining step back to a normal sequential step
+      if (unit.parallel && visible.length > 1) {
+        steps.push({ parallel: visible.map(serialize) });
+      } else {
+        for (const s of visible) steps.push(serialize(s));
+      }
+    }
+    result.steps = steps;
 
     return result;
   }
@@ -979,6 +1153,35 @@ function extractCommonFactors(terms: Condition[]): Condition | undefined {
 }
 
 // --- topological sort ---
+
+/**
+ * Computes step priorities: each step gets the minimum leaf index of any leaf
+ * step that transitively depends on it (directly or via condition sources).
+ * This makes the topological sort respect the declared `steps` order.
+ */
+function computePriorities(
+  graph: Map<Step<string>, GraphEntry>,
+  leafSteps: Step<string>[],
+): Map<Step<string>, number> {
+  const allSteps = new Set(graph.keys());
+  const priority = new Map<Step<string>, number>();
+  const assignPriority = (s: Step<string>, p: number) => {
+    const current = priority.get(s);
+    if (current !== undefined && current <= p) return;
+    priority.set(s, p);
+    const entry = graph.get(s);
+    if (!entry) return;
+    for (const dep of entry.deps) {
+      if (allSteps.has(dep)) {
+        assignPriority(dep, p);
+      }
+    }
+  };
+  for (let i = 0; i < leafSteps.length; i++) {
+    assignPriority(leafSteps[i], i);
+  }
+  return priority;
+}
 
 function topoSort(
   steps: Set<Step<string>>,

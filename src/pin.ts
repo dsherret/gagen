@@ -275,22 +275,34 @@ export function unpinParsedYaml(
         jobObj.uses = hashToOriginal.get(jobObj.uses);
       }
 
-      // steps
+      // steps (including steps nested inside parallel: blocks)
       if (Array.isArray(jobObj.steps)) {
         for (const s of jobObj.steps) {
-          if (typeof s === "object" && s !== null) {
-            const stepObj = s as Record<string, unknown>;
-            if (
-              typeof stepObj.uses === "string" &&
-              hashToOriginal.has(stepObj.uses)
-            ) {
-              stepObj.uses = hashToOriginal.get(stepObj.uses);
-            }
-          }
+          unpinStep(s, hashToOriginal);
         }
       }
     }
   }
 
   return obj;
+}
+
+/** Reverts a pinned hash on a single step, recursing into `parallel:` blocks. */
+function unpinStep(
+  step: unknown,
+  hashToOriginal: Map<string, string>,
+): void {
+  if (typeof step !== "object" || step === null) return;
+  const stepObj = step as Record<string, unknown>;
+  if (
+    typeof stepObj.uses === "string" &&
+    hashToOriginal.has(stepObj.uses)
+  ) {
+    stepObj.uses = hashToOriginal.get(stepObj.uses);
+  }
+  if (Array.isArray(stepObj.parallel)) {
+    for (const child of stepObj.parallel) {
+      unpinStep(child, hashToOriginal);
+    }
+  }
 }

@@ -1,5 +1,6 @@
 export { Step, step, StepRef } from "./step.ts";
 export type {
+  CompositeKind,
   ConditionLike,
   ConfigValue,
   StepBuilder,

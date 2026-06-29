@@ -34,8 +34,16 @@ export function resetStepCounter(): void {
 
 export type StepLike = Step<string> | StepRef<string> | StepConfig;
 
+/**
+ * How a composite step's children relate to each other. "sequential" children
+ * run one after another (the default); "parallel" children run concurrently and
+ * serialize to a GitHub Actions `parallel:` block.
+ */
+export type CompositeKind = "sequential" | "parallel";
+
 export class Step<O extends string = never> implements ExpressionSource {
   readonly #id: string;
+  readonly #kind: CompositeKind;
   readonly config: StepConfig<O>;
   readonly outputs: { [K in O]: ExpressionValue };
   // cross-job step references for needs inference (e.g., artifact download → upload)
@@ -43,10 +51,10 @@ export class Step<O extends string = never> implements ExpressionSource {
   readonly children: readonly StepLike[];
 
   constructor(config: StepConfig<O>, crossJobDeps?: Step<string>[]);
-  constructor(children: readonly StepLike[]);
+  constructor(children: readonly StepLike[], kind?: CompositeKind);
   constructor(
     configOrChildren: StepConfig<O> | readonly StepLike[],
-    crossJobDeps?: Step<string>[],
+    second?: Step<string>[] | CompositeKind,
   ) {
     if (Array.isArray(configOrChildren)) {
       // composite step (group of children)
@@ -54,6 +62,7 @@ export class Step<O extends string = never> implements ExpressionSource {
         throw new Error("step() requires at least one step");
       }
       this.#id = `_step_${stepCounter++}`;
+      this.#kind = (second as CompositeKind | undefined) ?? "sequential";
       this.config = {} as StepConfig<O>;
       this._crossJobDeps = Object.freeze([]);
       this.outputs = {} as { [K in O]: ExpressionValue };
@@ -61,6 +70,8 @@ export class Step<O extends string = never> implements ExpressionSource {
       return;
     }
 
+    this.#kind = "sequential";
+    const crossJobDeps = second as Step<string>[] | undefined;
     const config = configOrChildren as StepConfig<O>;
     if (config.outputs?.length && !config.id) {
       throw new Error(
@@ -89,6 +100,11 @@ export class Step<O extends string = never> implements ExpressionSource {
 
   get id(): string {
     return this.#id;
+  }
+
+  /** Whether this composite's children run sequentially or in parallel. */
+  get kind(): CompositeKind {
+    return this.#kind;
   }
 
   dependsOn(...deps: StepLike[]): StepRef<O> {
@@ -167,6 +183,10 @@ export interface StepBuilder {
   if(condition: ConditionLike): StepBuilder;
   dependsOn(...deps: StepLike[]): StepBuilder;
   comesAfter(...deps: StepLike[]): StepBuilder;
+  /** Builds a parallel group from the args, carrying this builder's deps/condition. */
+  parallel(
+    ...args: (StepConfig | Step<string> | StepRef<string>)[]
+  ): StepRef<string>;
 }
 
 interface StepBuilderInit {
@@ -246,6 +266,14 @@ function createStepBuilder(init: StepBuilderInit): StepBuilder {
     });
   };
 
+  builder.parallel = (...args: unknown[]): StepRef<string> => {
+    return new StepRef(buildParallelFromArgs(...args), {
+      condition: init.condition,
+      dependencies: init.dependencies ?? [],
+      afterDependencies: init.afterDependencies ?? [],
+    });
+  };
+
   return builder;
 }
 
@@ -258,6 +286,14 @@ export interface StepFunction {
   if(condition: ConditionLike): StepBuilder;
   dependsOn(...deps: StepLike[]): StepBuilder;
   comesAfter(...deps: StepLike[]): StepBuilder;
+  /**
+   * Groups steps into a parallel block. The steps run concurrently and
+   * serialize to a GitHub Actions `parallel:` block. Shared dependencies
+   * (pulled in via `dependsOn`) are hoisted to run before the block.
+   */
+  parallel(
+    ...args: (StepConfig | Step<string> | StepRef<string>)[]
+  ): Step<string>;
 }
 
 export const step: StepFunction = Object.assign(
@@ -269,8 +305,23 @@ export const step: StepFunction = Object.assign(
       createStepBuilder({ dependencies: deps }),
     comesAfter: (...deps: StepLike[]): StepBuilder =>
       createStepBuilder({ afterDependencies: deps }),
+    parallel: (...args: unknown[]): Step<string> =>
+      buildParallelFromArgs(...args),
   },
 );
+
+/** Builds a parallel composite step from the given args. */
+function buildParallelFromArgs(...args: unknown[]): Step<string> {
+  if (args.length === 0) {
+    throw new Error("step.parallel() requires at least one argument");
+  }
+  const children: StepLike[] = args.map((item) =>
+    item instanceof Step || item instanceof StepRef
+      ? item
+      : new Step(item as StepConfig)
+  );
+  return new Step(children, "parallel");
+}
 
 // --- StepRef: immutable wrapper for per-usage deps/conditions ---
 

@@ -433,6 +433,35 @@ library throws with the cycle path:
 Error: Cycle detected in step ordering: A → B → A
 ```
 
+## Parallel steps
+
+`step.parallel()` groups steps into a
+[GitHub Actions `parallel:` block](https://github.blog/changelog/2026-06-25-actions-steps-can-now-be-run-in-parallel/)
+so they run concurrently within a single job:
+
+```ts
+const a = step({ name: "A", run: "echo a" });
+const b = step({ name: "B", run: "echo b" });
+
+workflow({
+  ...,
+  jobs: [{
+    id: "ci",
+    runsOn: "ubuntu-latest",
+    steps: [step.parallel(a, b)],
+  }],
+});
+```
+
+```yaml
+steps:
+  - parallel:
+      - name: A
+        run: echo a
+      - name: B
+        run: echo b
+```
+
 ## Typed matrix
 
 `defineMatrix()` gives you typed access to matrix values:
