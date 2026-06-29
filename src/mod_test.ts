@@ -317,6 +317,169 @@ jobs:
   );
 });
 
+// --- parallel steps ---
+
+Deno.test("step.parallel emits a parallel block", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [step.parallel(a, b)] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - name: A
+            run: echo a
+          - name: B
+            run: echo b
+`,
+  );
+});
+
+Deno.test("parallel members' shared dep is hoisted before the block", () => {
+  setup();
+  const checkout = step({ name: "Checkout" });
+  const clippy = step.dependsOn(checkout)({
+    name: "Clippy",
+    run: "cargo clippy",
+  });
+  const fmt = step.dependsOn(checkout)({
+    name: "Fmt",
+    run: "cargo fmt --check",
+  });
+  const lint = step.parallel(clippy, fmt);
+  const done = step.dependsOn(lint)({ name: "Done", run: "echo done" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [done] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+      - parallel:
+          - name: Clippy
+            run: cargo clippy
+          - name: Fmt
+            run: cargo fmt --check
+      - name: Done
+        run: echo done
+`,
+  );
+});
+
+Deno.test("step.dependsOn(...).parallel(...).if(...) propagates to members and deps", () => {
+  setup();
+  const checkout = step({ name: "Checkout" });
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step.dependsOn(checkout).parallel(a, b).if(isBranch("main")),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        if: github.ref == 'refs/heads/main'
+      - parallel:
+          - name: A
+            if: github.ref == 'refs/heads/main'
+            run: echo a
+          - name: B
+            if: github.ref == 'refs/heads/main'
+            run: echo b
+`,
+  );
+});
+
+Deno.test("a parallel member filtered out by its condition collapses the block", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  // always-false condition removes B, leaving a single concurrent step
+  const b = step({ name: "B", run: "echo b", if: conditions.isFalse() });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [step.parallel(a, b)] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: A
+        run: echo a
+`,
+  );
+});
+
+Deno.test("steps in a parallel group cannot depend on each other", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  const b = step.dependsOn(a)({ name: "B", run: "echo b" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [step.parallel(a, b)] },
+    ],
+  });
+
+  assertThrows(
+    () => wf.toYamlString(),
+    Error,
+    "Steps in a parallel group cannot depend on each other",
+  );
+});
+
 // --- step with if condition ---
 
 Deno.test("step with if condition appears in YAML", () => {
