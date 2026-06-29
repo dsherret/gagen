@@ -508,11 +508,12 @@ steps:
   background step finishes.
 - `step.cancel(step)` → a `cancel` step that terminates a background step.
 
-A background step must have an explicit `id` to be referenced by `waitFor` or
-`cancel`; otherwise the call throws. A maximum of 10 background steps run
-concurrently. Because ordering between background work and the steps that run
-alongside it is positional, list those steps in the order you want them (or use
-`comesAfter()`), the same as any other step.
+`waitFor`/`cancel` only target a background step with an explicit `id` (the id
+is needed to reference it in the generated YAML); otherwise the call throws. A
+maximum of 10 background steps run concurrently. Because ordering between
+background work and the steps that run alongside it is positional, list those
+steps in the order you want them (or use `comesAfter()`), the same as any other
+step.
 
 ## Typed matrix
 

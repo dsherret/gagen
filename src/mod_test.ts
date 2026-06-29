@@ -1428,6 +1428,462 @@ Deno.test("a wait config referencing a step without an id throws at serializatio
   );
 });
 
+// --- background steps: review coverage ---
+
+Deno.test("step.waitFor pulls in the target's transitive deps", () => {
+  setup();
+  const setup_ = step({ name: "Setup", run: "setup" });
+  const server = step.dependsOn(setup_)({
+    id: "server",
+    run: "npm start",
+    background: true,
+  });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [step.waitFor(server)] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup
+        run: setup
+      - id: server
+        run: npm start
+        background: true
+      - wait: server
+`,
+  );
+});
+
+Deno.test("step.waitFor deduplicates repeated targets", () => {
+  setup();
+  const a = step({ id: "a", run: "x", background: true });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [a, step.waitFor(a, a)] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - id: a
+        run: x
+        background: true
+      - wait: a
+`,
+  );
+});
+
+Deno.test("a wait step can carry a condition", () => {
+  setup();
+  const server = step({ id: "server", run: "npm start", background: true });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [server, step.waitFor(server).if(isBranch("main"))],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - id: server
+        run: npm start
+        background: true
+      - if: github.ref == 'refs/heads/main'
+        wait: server
+`,
+  );
+});
+
+Deno.test("a background step without an id serializes fine", () => {
+  setup();
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step({ name: "Telemetry", run: "./telemetry.sh", background: true }),
+          step({ name: "Pack", run: "pack" }),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Telemetry
+        run: ./telemetry.sh
+        background: true
+      - name: Pack
+        run: pack
+`,
+  );
+});
+
+Deno.test("background works on a uses step", () => {
+  setup();
+  const svc = step({
+    id: "svc",
+    uses: "actions/foo@v1",
+    with: { port: 8080 },
+    background: true,
+  });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [svc, step.waitFor(svc)] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - id: svc
+        uses: actions/foo@v1
+        with:
+          port: 8080
+        background: true
+      - wait: svc
+`,
+  );
+});
+
+Deno.test("config-form wait / waitAll / cancel serialize", () => {
+  setup();
+  const a = step({ id: "a", run: "a", background: true });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          a,
+          step({ name: "W", wait: a }),
+          step({ name: "WA", waitAll: true }),
+          step({ name: "C", cancel: a }),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - id: a
+        run: a
+        background: true
+      - name: W
+        wait: a
+      - name: WA
+        wait-all: null
+      - name: C
+        cancel: a
+`,
+  );
+});
+
+Deno.test("a single-element wait list collapses to a scalar", () => {
+  setup();
+  const a = step({ id: "a", run: "a", background: true });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [a, step({ name: "W", wait: [a] })],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - id: a
+        run: a
+        background: true
+      - name: W
+        wait: a
+`,
+  );
+});
+
+Deno.test("modifiers apply to waitFor/cancel/waitForAll results", () => {
+  setup();
+  const mon = step({ id: "mon", run: "m", background: true });
+  const main = step({ name: "Main", run: "main" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          mon,
+          main,
+          step.cancel(mon).comesAfter(main),
+          step.waitForAll().if(isBranch("main")),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - id: mon
+        run: m
+        background: true
+      - name: Main
+        run: main
+      - cancel: mon
+      - if: github.ref == 'refs/heads/main'
+        wait-all: null
+`,
+  );
+});
+
+Deno.test("a step can depend on a waitFor step", () => {
+  setup();
+  const server = step({ id: "server", run: "s", background: true });
+  const waited = step.waitFor(server);
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          server,
+          step.dependsOn(waited)({ name: "After", run: "after" }),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - id: server
+        run: s
+        background: true
+      - wait: server
+      - name: After
+        run: after
+`,
+  );
+});
+
+Deno.test("a background step cannot be a parallel group member", () => {
+  setup();
+  const server = step({ id: "server", run: "s", background: true });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step.parallel(server, step({ name: "X", run: "x" }))],
+      },
+    ],
+  });
+
+  assertThrows(
+    () => wf.toYamlString(),
+    Error,
+    "A parallel group member cannot be a background, wait, wait-all, or cancel step",
+  );
+});
+
+Deno.test("a wait step cannot be a parallel group member", () => {
+  setup();
+  const server = step({ id: "server", run: "s", background: true });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step.parallel(step.waitFor(server), step({ name: "X", run: "x" })),
+        ],
+      },
+    ],
+  });
+
+  assertThrows(
+    () => wf.toYamlString(),
+    Error,
+    "A parallel group member cannot be a background, wait, wait-all, or cancel step",
+  );
+});
+
+Deno.test("a step cannot combine wait, wait-all, or cancel", () => {
+  setup();
+  const a = step({ id: "a", run: "a", background: true });
+  assertThrows(
+    () => step({ wait: a, cancel: a }),
+    Error,
+    "wait, wait-all, and cancel are mutually exclusive",
+  );
+});
+
+Deno.test("a wait/cancel step cannot also do work", () => {
+  setup();
+  const a = step({ id: "a", run: "a", background: true });
+  assertThrows(
+    () => step({ name: "Bad", run: "echo", wait: a }),
+    Error,
+    "A wait step cannot also have run",
+  );
+});
+
+Deno.test("step.waitFor requires the target to be a background step", () => {
+  setup();
+  const a = step({ id: "a", run: "x" });
+  assertThrows(
+    () => step.waitFor(a),
+    Error,
+    "step.waitFor() can only target a background step",
+  );
+});
+
+Deno.test("step.cancel requires the target to be a background step", () => {
+  setup();
+  const a = step({ id: "a", run: "x" });
+  assertThrows(
+    () => step.cancel(a),
+    Error,
+    "step.cancel() can only target a background step",
+  );
+});
+
+Deno.test("a cancel config referencing a step without an id throws", () => {
+  setup();
+  const noId = step({ name: "No id", run: "x", background: true });
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [noId, step({ name: "C", cancel: noId })],
+      },
+    ],
+  });
+
+  assertThrows(
+    () => wf.toYamlString(),
+    Error,
+    "a step referenced by `wait` or `cancel` must have an explicit id",
+  );
+});
+
+Deno.test("a background step with a pinned uses round-trips", () => {
+  setup();
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step({ id: "svc", uses: "actions/service@v1", background: true }),
+          step({ name: "Test", run: "npm test" }),
+        ],
+      },
+    ],
+  });
+
+  const original = wf.toYamlString();
+  const { content: pinned } = pinYamlContent(original, () => "a".repeat(40));
+  const unpinned = unpinParsedYaml(parse(pinned), parsePinComments(pinned));
+  assertEquals(JSON.stringify(unpinned), JSON.stringify(parse(original)));
+});
+
 // --- step with if condition ---
 
 Deno.test("step with if condition appears in YAML", () => {
