@@ -44,8 +44,10 @@ workflow({
       steps: [
         checkout,
         setupDeno,
-        { name: "fmt", run: "deno fmt --check" },
-        { name: "lint", run: "deno lint" },
+        step.parallel(
+          { name: "fmt", run: "deno fmt --check" },
+          { name: "lint", run: "deno lint" },
+        ),
         { name: "test", run: "deno test -A" },
         { name: "lint ci", run: "deno run -A ./src/cli.ts --lint" },
       ],
