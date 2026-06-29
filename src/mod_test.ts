@@ -587,6 +587,561 @@ jobs:
   );
 });
 
+// --- parallel steps: coverage ---
+
+Deno.test("step.parallel() with no args throws", () => {
+  assertThrows(
+    () => step.parallel(),
+    Error,
+    "step.parallel() requires at least one argument",
+  );
+});
+
+Deno.test("step.parallel with a single member collapses to a plain step", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [step.parallel(a)] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: A
+        run: echo a
+`,
+  );
+});
+
+Deno.test("Step.kind reflects sequential vs parallel composites", () => {
+  setup();
+  const a = step({ name: "A" });
+  const b = step({ name: "B" });
+  assertEquals(step.parallel(a, b).kind, "parallel");
+  assertEquals(step(a, b).kind, "sequential");
+  assertEquals(a.kind, "sequential");
+});
+
+Deno.test("step.parallel accepts config objects and mixed arg forms", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        // plain config object, Step, and StepRef in one call
+        steps: [
+          step.parallel(
+            { name: "Cfg", run: "echo cfg" },
+            a,
+            step.if(isBranch("main"))({ name: "Ref", run: "echo ref" }),
+          ),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - name: Cfg
+            run: echo cfg
+          - name: A
+            run: echo a
+          - name: Ref
+            if: github.ref == 'refs/heads/main'
+            run: echo ref
+`,
+  );
+});
+
+Deno.test("step.if(...).parallel(...) propagates the condition to members", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step.if(isBranch("main")).parallel(a, b)],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - name: A
+            if: github.ref == 'refs/heads/main'
+            run: echo a
+          - name: B
+            if: github.ref == 'refs/heads/main'
+            run: echo b
+`,
+  );
+});
+
+Deno.test("step.comesAfter(...).parallel(...) orders the block after the target", () => {
+  setup();
+  const x = step({ name: "X", run: "echo x" });
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [x, step.comesAfter(x).parallel(a, b)],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: X
+        run: echo x
+      - parallel:
+          - name: A
+            run: echo a
+          - name: B
+            run: echo b
+`,
+  );
+});
+
+Deno.test(".if() on a step.parallel(...) result propagates to members", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step.parallel(a, b).if(isBranch("main"))],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - name: A
+            if: github.ref == 'refs/heads/main'
+            run: echo a
+          - name: B
+            if: github.ref == 'refs/heads/main'
+            run: echo b
+`,
+  );
+});
+
+Deno.test("members with different conditions OR onto a shared dep (member deps)", () => {
+  setup();
+  const checkout = step({ name: "Checkout" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step.parallel(
+            step.dependsOn(checkout).if(isBranch("main"))({
+              name: "A",
+              run: "echo a",
+            }),
+            step.dependsOn(checkout).if(isTag())({ name: "B", run: "echo b" }),
+          ),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        if: 'github.ref == ''refs/heads/main'' || startsWith(github.ref, ''refs/tags/'')'
+      - parallel:
+          - name: A
+            if: github.ref == 'refs/heads/main'
+            run: echo a
+          - name: B
+            if: 'startsWith(github.ref, ''refs/tags/'')'
+            run: echo b
+`,
+  );
+});
+
+Deno.test("group-level dep gets OR of members' differing conditions", () => {
+  setup();
+  const checkout = step({ name: "Checkout" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step.dependsOn(checkout).parallel(
+            step({ name: "A", run: "echo a", if: isBranch("main") }),
+            step({ name: "B", run: "echo b", if: isTag() }),
+          ),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        if: 'github.ref == ''refs/heads/main'' || startsWith(github.ref, ''refs/tags/'')'
+      - parallel:
+          - name: A
+            if: github.ref == 'refs/heads/main'
+            run: echo a
+          - name: B
+            if: 'startsWith(github.ref, ''refs/tags/'')'
+            run: echo b
+`,
+  );
+});
+
+Deno.test("a parallel block whose members are all filtered out is omitted", () => {
+  setup();
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step.parallel(
+            step({ name: "A", run: "echo a", if: conditions.isFalse() }),
+            step({ name: "B", run: "echo b", if: conditions.isFalse() }),
+          ),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps: []
+`,
+  );
+});
+
+Deno.test("multiple parallel groups in one job emit separate blocks", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+  const c = step({ name: "C", run: "echo c" });
+  const d = step({ name: "D", run: "echo d" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step.parallel(a, b), step.parallel(c, d)],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - name: A
+            run: echo a
+          - name: B
+            run: echo b
+      - parallel:
+          - name: C
+            run: echo c
+          - name: D
+            run: echo d
+`,
+  );
+});
+
+Deno.test("a member's full config serializes correctly inside the block", () => {
+  setup();
+  const b = step({ name: "B", run: "echo b" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step.parallel(
+            step({
+              id: "m",
+              uses: "actions/foo@v1",
+              with: { x: 1 },
+              env: { E: "e" },
+              continueOnError: true,
+              timeoutMinutes: 5,
+              workingDirectory: "sub",
+              shell: "bash",
+              run: "echo hi",
+            }),
+            b,
+          ),
+        ],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - id: m
+            uses: actions/foo@v1
+            shell: bash
+            working-directory: sub
+            env:
+              E: e
+            continue-on-error: true
+            timeout-minutes: 5
+            with:
+              x: 1
+            run: echo hi
+          - name: B
+            run: echo b
+`,
+  );
+});
+
+Deno.test("a later step can gate on a parallel member's output", () => {
+  setup();
+  const gen = step({
+    id: "gen",
+    run: "echo x=1 >> $GITHUB_OUTPUT",
+    outputs: ["x"],
+  });
+  const b = step({ name: "B", run: "echo b" });
+  const group = step.parallel(gen, b);
+  const done = step.dependsOn(group)({
+    name: "Done",
+    run: "echo done",
+    if: gen.outputs.x.equals("1"),
+  });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [done] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - id: gen
+            run: echo x=1 >> $GITHUB_OUTPUT
+          - name: B
+            run: echo b
+      - name: Done
+        if: steps.gen.outputs.x == '1'
+        run: echo done
+`,
+  );
+});
+
+Deno.test("a cross-job artifact download as a parallel member still infers needs", () => {
+  setup();
+  const buildOutput = artifact("build-output");
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        steps: [buildOutput.upload({ path: "dist/" })],
+      },
+      {
+        id: "deploy",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step.parallel(
+            buildOutput.download({ dirPath: "dist/" }),
+            step({ name: "Other", run: "echo o" }),
+          ),
+        ],
+      },
+    ],
+  });
+
+  assertStringIncludes(
+    wf.toYamlString(),
+    "deploy:\n    needs:\n      - build",
+  );
+});
+
+Deno.test("the same parallel group reused across jobs emits in each", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+  const shared = step.parallel(a, b);
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j1", runsOn: "ubuntu-latest", steps: [shared] },
+      { id: "j2", runsOn: "ubuntu-latest", steps: [shared] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j1:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - name: A
+            run: echo a
+          - name: B
+            run: echo b
+  j2:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - name: A
+            run: echo a
+          - name: B
+            run: echo b
+`,
+  );
+});
+
+Deno.test("pin/unpin round-trips a uses nested in a parallel block", () => {
+  setup();
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [
+          step.parallel(
+            step({ uses: "actions/checkout@v6" }),
+            step({ uses: "actions/setup-node@v4" }),
+          ),
+        ],
+      },
+    ],
+  });
+
+  const original = wf.toYamlString();
+  const { content: pinned } = pinYamlContent(original, () => "a".repeat(40));
+  // mirrors the --lint comparison: unpin the stored file and compare to source
+  const unpinned = unpinParsedYaml(parse(pinned), parsePinComments(pinned));
+  assertEquals(JSON.stringify(unpinned), JSON.stringify(parse(original)));
+});
+
 // --- step with if condition ---
 
 Deno.test("step with if condition appears in YAML", () => {
