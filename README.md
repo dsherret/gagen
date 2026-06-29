@@ -469,7 +469,7 @@ that overlaps later steps — set `background: true` on a step and synchronize
 with `step.waitFor()`, `step.waitForAll()`, or `step.cancel()`.
 
 A long-running service is started in the background, used, then stopped with
-`step.cancel()` (it never exits on its own):
+`step.cancel()`:
 
 ```ts
 const server = step({
@@ -488,6 +488,7 @@ workflow({
       server,
       step({ name: "Run tests", run: "npm test" }),
       step.cancel(server),
+      // ...more steps go here...
     ],
   }],
 });
