@@ -468,6 +468,9 @@ For finer control than `parallel` — long-running services, or non-blocking wor
 that overlaps later steps — set `background: true` on a step and synchronize
 with `step.waitFor()`, `step.waitForAll()`, or `step.cancel()`.
 
+A long-running service is started in the background, used, then stopped with
+`step.cancel()` (it never exits on its own):
+
 ```ts
 const server = step({
   id: "server",
@@ -484,7 +487,7 @@ workflow({
     steps: [
       server,
       step({ name: "Run tests", run: "npm test" }),
-      step.waitFor(server),
+      step.cancel(server),
     ],
   }],
 });
@@ -498,7 +501,46 @@ steps:
     background: true
   - name: Run tests
     run: npm test
-  - wait: server
+  - cancel: server
+```
+
+`step.waitFor()` is instead for background work that finishes — kick it off, do
+something else while it runs, then block on it before the step that needs it:
+
+```ts
+const build = step({
+  id: "build",
+  name: "Build assets",
+  run: "npm run build",
+  background: true,
+});
+
+workflow({
+  ...,
+  jobs: [{
+    id: "ci",
+    runsOn: "ubuntu-latest",
+    steps: [
+      build,
+      step({ name: "Lint", run: "npm run lint" }), // runs while the build proceeds
+      step.waitFor(build),
+      step({ name: "Package", run: "npm run package" }),
+    ],
+  }],
+});
+```
+
+```yaml
+steps:
+  - name: Build assets
+    id: build
+    run: npm run build
+    background: true
+  - name: Lint
+    run: npm run lint
+  - wait: build
+  - name: Package
+    run: npm run package
 ```
 
 - `step.waitFor(...steps)` → a `wait` step that blocks until the referenced
