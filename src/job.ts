@@ -211,6 +211,21 @@ function recordMember(
 }
 
 /**
+ * Rejects a composite step used directly as a parallel group member. Members
+ * run concurrently with no ordering, so a member cannot itself be a nested
+ * parallel group or a sequential group of steps.
+ */
+function throwInvalidParallelMember(composite: Step<string>): never {
+  if (composite.kind === "parallel") {
+    throw new Error("Parallel groups cannot be nested.");
+  }
+  throw new Error(
+    "A parallel group member cannot itself be a group of steps — " +
+      "each member must be a single step.",
+  );
+}
+
+/**
  * Recursively flattens a StepLike tree into a flat graph of Steps with
  * per-job dependencies and conditions. Returns the leaf-level Steps that
  * were contributed, so parent composite steps can apply their modifiers.
@@ -241,6 +256,7 @@ function flattenStepLike(
     if (step.children.length > 0) {
       // StepRef wrapping composite step: recurse with combined context.
       // a parallel composite makes its children concurrent members.
+      if (parallelGroup != null) throwInvalidParallelMember(step);
       const childGroup = step.kind === "parallel" ? step : parallelGroup;
       const contributed: Step<string>[] = [];
       for (const child of step.children) {
@@ -337,6 +353,7 @@ function flattenStepLike(
   if (item.children.length > 0) {
     // composite step: recurse into children with same context.
     // a parallel composite makes its children concurrent members.
+    if (parallelGroup != null) throwInvalidParallelMember(item);
     const childGroup = item.kind === "parallel" ? item : parallelGroup;
     const contributed: Step<string>[] = [];
     for (const child of item.children) {
@@ -562,7 +579,17 @@ export class Job implements ExpressionSource {
       }
       for (const dep of entry.afterDeps) {
         const to = repOf(dep);
-        if (to !== from) cEntry.afterDeps.add(to);
+        if (to === from) {
+          if (s !== dep) {
+            throw new Error(
+              `Steps in a parallel group cannot be ordered after each other: ${
+                stepLabel(dep)
+              } → ${stepLabel(s)}`,
+            );
+          }
+          continue;
+        }
+        cEntry.afterDeps.add(to);
       }
     }
 

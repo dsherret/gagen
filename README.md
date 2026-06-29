@@ -472,6 +472,28 @@ step
   .if(isBranch("main"));
 ```
 
+A few things to know:
+
+- Every step in a parallel block runs concurrently. There is no ordering
+  _within_ a block — for an ordered sequence, use a single step with a
+  multi-command `run`, or sequence the work across separate steps outside the
+  block.
+- GitHub runs at most 10 steps in a block concurrently; additional steps are
+  queued until a slot frees up.
+- Because members are unordered, a member cannot be ordered relative to another
+  member, and a member must be a single step (not a nested group). Each of these
+  throws a clear error:
+
+  ```
+  Error: Steps in a parallel group cannot depend on each other: A → B
+  Error: Steps in a parallel group cannot be ordered after each other: A → B
+  Error: Parallel groups cannot be nested.
+  Error: A parallel group member cannot itself be a group of steps — each member must be a single step.
+  ```
+
+- If a member is dropped by its `if` condition, the block collapses to the
+  remaining steps (and to a plain step if only one remains).
+
 ## Typed matrix
 
 `defineMatrix()` gives you typed access to matrix values:

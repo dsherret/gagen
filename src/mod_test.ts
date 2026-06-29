@@ -476,7 +476,114 @@ Deno.test("steps in a parallel group cannot depend on each other", () => {
   assertThrows(
     () => wf.toYamlString(),
     Error,
-    "Steps in a parallel group cannot depend on each other",
+    "Steps in a parallel group cannot depend on each other: A → B",
+  );
+});
+
+Deno.test("steps in a parallel group cannot be ordered after each other", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  const b = step.comesAfter(a)({ name: "B", run: "echo b" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [step.parallel(a, b)] },
+    ],
+  });
+
+  assertThrows(
+    () => wf.toYamlString(),
+    Error,
+    "Steps in a parallel group cannot be ordered after each other: A → B",
+  );
+});
+
+Deno.test("parallel groups cannot be nested", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+  const c = step({ name: "C", run: "echo c" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step.parallel(a, step.parallel(b, c))],
+      },
+    ],
+  });
+
+  assertThrows(
+    () => wf.toYamlString(),
+    Error,
+    "Parallel groups cannot be nested.",
+  );
+});
+
+Deno.test("a parallel group member cannot be a sequential group of steps", () => {
+  setup();
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+  const c = step({ name: "C", run: "echo c" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step.parallel(a, step(b, c))],
+      },
+    ],
+  });
+
+  assertThrows(
+    () => wf.toYamlString(),
+    Error,
+    "A parallel group member cannot itself be a group of steps",
+  );
+});
+
+Deno.test("a parallel group nested inside a sequential composite is allowed", () => {
+  setup();
+  const setup_ = step({ name: "Setup", run: "echo setup" });
+  const a = step({ name: "A", run: "echo a" });
+  const b = step({ name: "B", run: "echo b" });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      {
+        id: "j",
+        runsOn: "ubuntu-latest",
+        steps: [step(setup_, step.parallel(a, b))],
+      },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup
+        run: echo setup
+      - parallel:
+          - name: A
+            run: echo a
+          - name: B
+            run: echo b
+`,
   );
 });
 
@@ -5657,6 +5764,37 @@ Deno.test("unpinParsedYaml handles reusable workflow uses", () => {
     (obj.jobs.deploy as Record<string, unknown>).uses,
     "org/repo/.github/workflows/deploy.yml@main",
   );
+});
+
+Deno.test("unpinParsedYaml restores uses nested inside a parallel block", () => {
+  const hashA = "a".repeat(40);
+  const hashB = "b".repeat(40);
+  const obj = {
+    jobs: {
+      build: {
+        "runs-on": "ubuntu-latest",
+        steps: [
+          {
+            parallel: [
+              { uses: `actions/checkout@${hashA}` },
+              { uses: `actions/setup-node@${hashB}` },
+            ],
+          },
+          { run: "npm test" },
+        ],
+      },
+    },
+  };
+  const pins: PinEntry[] = [
+    { original: "actions/checkout@v6", hash: hashA },
+    { original: "actions/setup-node@v4", hash: hashB },
+  ];
+  unpinParsedYaml(obj, pins);
+  const block = obj.jobs.build.steps[0] as {
+    parallel: Record<string, unknown>[];
+  };
+  assertEquals(block.parallel[0].uses, "actions/checkout@v6");
+  assertEquals(block.parallel[1].uses, "actions/setup-node@v4");
 });
 
 Deno.test("runsOn supports string array", () => {
