@@ -158,24 +158,31 @@ function combineAndConditions(
 }
 
 /**
- * Returns a step's config.if as a ConditionLike suitable for passing down
- * to dependencies, or undefined if it references step outputs (which would
- * create circular condition dependencies).
+ * Returns a condition suitable for passing down to dependencies, or undefined
+ * if it references step outputs (which would create circular condition
+ * dependencies — a dependency cannot be gated on an output produced by a step
+ * that runs after it).
  */
+function propagatableCondition(
+  condition: ConditionLike | undefined,
+): ConditionLike | undefined {
+  if (condition == null) return undefined;
+  if (condition instanceof Condition) {
+    for (const source of condition.sources) {
+      if (source instanceof Step) return undefined;
+    }
+  }
+  if (condition instanceof ExpressionValue) {
+    for (const source of condition.allSources) {
+      if (source instanceof Step) return undefined;
+    }
+  }
+  return condition;
+}
+
+/** Returns a step's config.if if it is safe to propagate to dependencies. */
 function propagatableConfigIf(step: Step<string>): ConditionLike | undefined {
-  const configIf = step.config.if;
-  if (configIf == null) return undefined;
-  if (configIf instanceof Condition) {
-    for (const source of configIf.sources) {
-      if (source instanceof Step) return undefined;
-    }
-  }
-  if (configIf instanceof ExpressionValue) {
-    for (const source of configIf.allSources) {
-      if (source instanceof Step) return undefined;
-    }
-  }
-  return configIf;
+  return propagatableCondition(step.config.if);
 }
 
 interface DeferredAfterDep {
@@ -273,10 +280,12 @@ function flattenStepLike(
           ),
         );
       }
-      // compute aggregate dep context: newContext AND (OR of children's
+      // compute aggregate dep context: context AND (OR of children's
       // config.ifs). If any child is unconditional, or the OR is a tautology,
-      // just use newContext.
-      let compositeDepsCtx: ConditionLike | undefined = newContext;
+      // just use the context. The context is filtered so an output-referencing
+      // condition doesn't propagate to dependencies (circular dependency).
+      const depBaseCtx = propagatableCondition(newContext);
+      let compositeDepsCtx: ConditionLike | undefined = depBaseCtx;
       if (item.dependencies.length > 0) {
         const childIfs: ConditionLike[] = [];
         let allConditional = true;
@@ -293,7 +302,7 @@ function flattenStepLike(
             childIfs.map((c) => toCondition(c)),
           );
           if (orCond != null) {
-            compositeDepsCtx = combineAndConditions(newContext, orCond);
+            compositeDepsCtx = combineAndConditions(depBaseCtx, orCond);
           }
         }
       }
@@ -328,9 +337,11 @@ function flattenStepLike(
     if (isLeaf) leafSteps.push(step);
     if (parallelGroup) recordMember(membership, parallelGroup, step);
     applyContextCondition(entry, newContext);
-    // include step's config.if in the dep context
+    // include step's config.if in the dep context. both the context and the
+    // config.if are filtered so output-referencing conditions don't propagate
+    // to dependencies (which would create a circular condition dependency).
     const depContext = combineAndConditions(
-      newContext,
+      propagatableCondition(newContext),
       propagatableConfigIf(step),
     );
     for (const dep of item.dependencies) {

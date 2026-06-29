@@ -1044,6 +1044,51 @@ jobs:
   );
 });
 
+Deno.test("depending on a group and gating on a member's output via .if() works", () => {
+  setup();
+  const gen = step({
+    id: "gen",
+    name: "Gen",
+    run: "echo x=1 >> $GITHUB_OUTPUT",
+    outputs: ["x"],
+  });
+  const b = step({ name: "B", run: "echo b" });
+  const group = step.parallel(gen, b);
+  // builder .if() referencing a member's output — must not cycle
+  const done = step.dependsOn(group).if(gen.outputs.x.equals("1"))({
+    name: "Done",
+    run: "echo done",
+  });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [done] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - parallel:
+          - name: Gen
+            id: gen
+            run: echo x=1 >> $GITHUB_OUTPUT
+          - name: B
+            run: echo b
+      - name: Done
+        if: steps.gen.outputs.x == '1'
+        run: echo done
+`,
+  );
+});
+
 Deno.test("a cross-job artifact download as a parallel member still infers needs", () => {
   setup();
   const buildOutput = artifact("build-output");
@@ -1718,6 +1763,47 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Build
+        id: build
+        run: echo 'status=ok' >> $GITHUB_OUTPUT
+      - name: Test
+        if: steps.build.outputs.status == 'ok'
+        run: cargo test
+`,
+  );
+});
+
+Deno.test("a builder .if() referencing a dependency's output does not cycle", () => {
+  setup();
+  const build = step({
+    id: "build",
+    name: "Build",
+    run: "echo 'status=ok' >> $GITHUB_OUTPUT",
+    outputs: ["status"],
+  });
+  // the condition is set via the builder .if() (not config.if) and references
+  // build's own output. it must not propagate onto build as a self-dependency.
+  const test = step.dependsOn(build).if(build.outputs.status.equals("ok"))({
+    name: "Test",
+    run: "cargo test",
+  });
+
+  const wf = workflow({
+    name: "test",
+    on: {},
+    jobs: [
+      { id: "j", runsOn: "ubuntu-latest", steps: [test] },
+    ],
+  });
+
+  assertEquals(
+    wf.toYamlString(),
+    `name: test
+on: {}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
       - name: Build
         id: build
         run: echo 'status=ok' >> $GITHUB_OUTPUT
