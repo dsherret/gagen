@@ -462,6 +462,102 @@ steps:
         run: echo b
 ```
 
+## Background steps
+
+For finer control than `parallel` — long-running services, or non-blocking work
+that overlaps later steps — set `background: true` on a step and synchronize
+with `step.waitFor()`, `step.waitForAll()`, or `step.cancel()`.
+
+A long-running service is started in the background, used, then stopped with
+`step.cancel()`:
+
+```ts
+const server = step({
+  id: "server",
+  name: "Start server",
+  run: "npm start",
+  background: true,
+});
+
+workflow({
+  ...,
+  jobs: [{
+    id: "e2e",
+    runsOn: "ubuntu-latest",
+    steps: [
+      server,
+      step({ name: "Run tests", run: "npm test" }),
+      step.cancel(server),
+      // ...more steps go here...
+    ],
+  }],
+});
+```
+
+```yaml
+steps:
+  - name: Start server
+    id: server
+    run: npm start
+    background: true
+  - name: Run tests
+    run: npm test
+  - cancel: server
+```
+
+`step.waitFor()` is instead for background work that finishes — kick it off, do
+something else while it runs, then block on it before the step that needs it:
+
+```ts
+const build = step({
+  id: "build",
+  name: "Build assets",
+  run: "npm run build",
+  background: true,
+});
+
+workflow({
+  ...,
+  jobs: [{
+    id: "ci",
+    runsOn: "ubuntu-latest",
+    steps: [
+      build,
+      step({ name: "Lint", run: "npm run lint" }), // runs while the build proceeds
+      step.waitFor(build),
+      step({ name: "Package", run: "npm run package" }),
+    ],
+  }],
+});
+```
+
+```yaml
+steps:
+  - name: Build assets
+    id: build
+    run: npm run build
+    background: true
+  - name: Lint
+    run: npm run lint
+  - wait: build
+  - name: Package
+    run: npm run package
+```
+
+- `step.waitFor(...steps)` → a `wait` step that blocks until the referenced
+  background steps finish (`wait: id`, or a list for several). It is ordered
+  after — and pulls in — the steps it waits on.
+- `step.waitForAll()` → a `wait-all` step that blocks until every active
+  background step finishes.
+- `step.cancel(step)` → a `cancel` step that terminates a background step.
+
+`waitFor`/`cancel` only target a background step with an explicit `id` (the id
+is needed to reference it in the generated YAML); otherwise the call throws. A
+maximum of 10 background steps run concurrently. Because ordering between
+background work and the steps that run alongside it is positional, list those
+steps in the order you want them (or use `comesAfter()`), the same as any other
+step.
+
 ## Typed matrix
 
 `defineMatrix()` gives you typed access to matrix values:

@@ -23,6 +23,23 @@ export interface StepConfig<O extends string = never> {
   readonly continueOnError?: boolean | string;
   readonly timeoutMinutes?: number;
   readonly outputs?: readonly O[];
+  /** Runs the step asynchronously so the job continues without waiting for it. */
+  readonly background?: boolean;
+  /**
+   * Makes this a `wait` step that blocks until the referenced background
+   * step(s) finish. Prefer `step.waitFor(...)`, which also wires up ordering.
+   */
+  readonly wait?: StepLike | readonly StepLike[];
+  /**
+   * Makes this a `wait-all` step that blocks until all active background steps
+   * finish. Prefer `step.waitForAll()`.
+   */
+  readonly waitAll?: boolean;
+  /**
+   * Makes this a `cancel` step that terminates the referenced background step.
+   * Prefer `step.cancel(...)`, which also wires up ordering.
+   */
+  readonly cancel?: StepLike;
 }
 
 let stepCounter = 0;
@@ -78,6 +95,7 @@ export class Step<O extends string = never> implements ExpressionSource {
         "Step with outputs must have an explicit id",
       );
     }
+    assertStepShape(config);
 
     this.#id = config.id ?? `_step_${stepCounter++}`;
     this.config = config;
@@ -168,6 +186,26 @@ export class Step<O extends string = never> implements ExpressionSource {
       result.run = Array.isArray(this.config.run)
         ? this.config.run.join("\n")
         : this.config.run;
+    }
+
+    if (this.config.background) {
+      result.background = true;
+    }
+
+    if (this.config.wait != null) {
+      const refs = Array.isArray(this.config.wait)
+        ? this.config.wait
+        : [this.config.wait];
+      const ids = [...new Set(refs.map(waitCancelTargetId))];
+      result.wait = ids.length === 1 ? ids[0] : ids;
+    }
+
+    if (this.config.waitAll) {
+      result["wait-all"] = null;
+    }
+
+    if (this.config.cancel != null) {
+      result.cancel = waitCancelTargetId(this.config.cancel);
     }
 
     return result;
@@ -294,6 +332,20 @@ export interface StepFunction {
   parallel(
     ...args: (StepConfig | Step<string> | StepRef<string>)[]
   ): Step<string>;
+  /**
+   * Creates a `wait` step that blocks until the given background step(s)
+   * finish. The referenced steps are ordered before this one and must each be
+   * a background step with an explicit `id`.
+   */
+  waitFor(...steps: (Step<string> | StepRef<string>)[]): StepRef<string>;
+  /** Creates a `wait-all` step that blocks until all background steps finish. */
+  waitForAll(): Step<string>;
+  /**
+   * Creates a `cancel` step that terminates the given background step. The
+   * referenced step is ordered before this one and must be a background step
+   * with an explicit `id`.
+   */
+  cancel(target: Step<string> | StepRef<string>): StepRef<string>;
 }
 
 export const step: StepFunction = Object.assign(
@@ -307,8 +359,52 @@ export const step: StepFunction = Object.assign(
       createStepBuilder({ afterDependencies: deps }),
     parallel: (...args: unknown[]): Step<string> =>
       buildParallelFromArgs(...args),
+    waitFor: (...steps: (Step<string> | StepRef<string>)[]): StepRef<string> =>
+      buildWaitFor(...steps),
+    waitForAll: (): Step<string> => new Step<string>({ waitAll: true }),
+    cancel: (target: Step<string> | StepRef<string>): StepRef<string> =>
+      buildCancel(target),
   },
 );
+
+/** Builds a `wait` step that depends on (and orders after) its targets. */
+function buildWaitFor(
+  ...steps: (Step<string> | StepRef<string>)[]
+): StepRef<string> {
+  if (steps.length === 0) {
+    throw new Error("step.waitFor() requires at least one step");
+  }
+  for (const s of steps) {
+    assertWaitCancelTarget(s, "step.waitFor()", "each referenced step");
+  }
+  // keep the original Step/StepRef so the target's own deps are preserved
+  return new StepRef<string>(new Step<string>({ wait: steps }), {
+    dependencies: steps,
+  });
+}
+
+/** Builds a `cancel` step that depends on (and orders after) its target. */
+function buildCancel(target: Step<string> | StepRef<string>): StepRef<string> {
+  assertWaitCancelTarget(target, "step.cancel()", "the referenced step");
+  return new StepRef<string>(new Step<string>({ cancel: target }), {
+    dependencies: [target],
+  });
+}
+
+/** Validates a `waitFor`/`cancel` target: a background step with an explicit id. */
+function assertWaitCancelTarget(
+  target: Step<string> | StepRef<string>,
+  call: string,
+  subject: string,
+): void {
+  const step = unwrapStep(target);
+  if (!step.config.id) {
+    throw new Error(`${call} requires ${subject} to have an explicit id`);
+  }
+  if (!step.config.background) {
+    throw new Error(`${call} can only target a background step`);
+  }
+}
 
 /** Builds a parallel composite step from the given args. */
 function buildParallelFromArgs(...args: unknown[]): Step<string> {
@@ -383,6 +479,46 @@ export class StepRef<O extends string = never> {
 }
 
 // --- serialization helpers ---
+
+/**
+ * Validates that a step does not combine mutually exclusive control keys.
+ * `wait`, `wait-all`, and `cancel` are distinct step kinds — each must stand
+ * alone (a step that waits or cancels does no work of its own).
+ */
+function assertStepShape(config: StepConfig<string>): void {
+  const controlKeys: string[] = [];
+  if (config.wait != null) controlKeys.push("wait");
+  if (config.waitAll) controlKeys.push("wait-all");
+  if (config.cancel != null) controlKeys.push("cancel");
+  if (controlKeys.length > 1) {
+    throw new Error(
+      `A step cannot combine ${controlKeys.join(", ")} — ` +
+        "wait, wait-all, and cancel are mutually exclusive.",
+    );
+  }
+  if (controlKeys.length === 1) {
+    const work: string[] = [];
+    if (config.run != null) work.push("run");
+    if (config.uses != null) work.push("uses");
+    if (config.background) work.push("background");
+    if (work.length > 0) {
+      throw new Error(
+        `A ${controlKeys[0]} step cannot also have ${work.join(", ")}.`,
+      );
+    }
+  }
+}
+
+/** Resolves the explicit id of a step referenced by `wait`/`cancel`. */
+function waitCancelTargetId(item: StepLike): string {
+  const step = unwrapStep(item);
+  if (!step.config.id) {
+    throw new Error(
+      "a step referenced by `wait` or `cancel` must have an explicit id",
+    );
+  }
+  return step.config.id;
+}
 
 export function serializeConditionLike(c: ConditionLike): string {
   if (c instanceof Condition) {

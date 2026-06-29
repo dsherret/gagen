@@ -207,6 +207,15 @@ function recordMember(
   group: Step<string>,
   step: Step<string>,
 ): void {
+  const c = step.config;
+  if (c.background || c.wait != null || c.waitAll || c.cancel != null) {
+    // a parallel block already runs each member as a background step with an
+    // implicit wait-all, so background/wait/wait-all/cancel members make no sense
+    throw new Error(
+      "A parallel group member cannot be a background, wait, wait-all, or " +
+        "cancel step.",
+    );
+  }
   if (membership.memberToGroup.has(step)) return;
   membership.memberToGroup.set(step, group);
   let members = membership.groupMembers.get(group);
