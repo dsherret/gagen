@@ -23,6 +23,23 @@ export interface StepConfig<O extends string = never> {
   readonly continueOnError?: boolean | string;
   readonly timeoutMinutes?: number;
   readonly outputs?: readonly O[];
+  /** Runs the step asynchronously so the job continues without waiting for it. */
+  readonly background?: boolean;
+  /**
+   * Makes this a `wait` step that blocks until the referenced background
+   * step(s) finish. Prefer `step.waitFor(...)`, which also wires up ordering.
+   */
+  readonly wait?: StepLike | readonly StepLike[];
+  /**
+   * Makes this a `wait-all` step that blocks until all active background steps
+   * finish. Prefer `step.waitForAll()`.
+   */
+  readonly waitAll?: boolean;
+  /**
+   * Makes this a `cancel` step that terminates the referenced background step.
+   * Prefer `step.cancel(...)`, which also wires up ordering.
+   */
+  readonly cancel?: StepLike;
 }
 
 let stepCounter = 0;
@@ -170,6 +187,26 @@ export class Step<O extends string = never> implements ExpressionSource {
         : this.config.run;
     }
 
+    if (this.config.background) {
+      result.background = true;
+    }
+
+    if (this.config.wait != null) {
+      const refs = Array.isArray(this.config.wait)
+        ? this.config.wait
+        : [this.config.wait];
+      const ids = refs.map(waitCancelTargetId);
+      result.wait = ids.length === 1 ? ids[0] : ids;
+    }
+
+    if (this.config.waitAll) {
+      result["wait-all"] = null;
+    }
+
+    if (this.config.cancel != null) {
+      result.cancel = waitCancelTargetId(this.config.cancel);
+    }
+
     return result;
   }
 }
@@ -294,6 +331,19 @@ export interface StepFunction {
   parallel(
     ...args: (StepConfig | Step<string> | StepRef<string>)[]
   ): Step<string>;
+  /**
+   * Creates a `wait` step that blocks until the given background step(s)
+   * finish. The referenced steps are ordered before this one and must each
+   * have an explicit `id`.
+   */
+  waitFor(...steps: StepLike[]): StepRef<string>;
+  /** Creates a `wait-all` step that blocks until all background steps finish. */
+  waitForAll(): Step<string>;
+  /**
+   * Creates a `cancel` step that terminates the given background step. The
+   * referenced step is ordered before this one and must have an explicit `id`.
+   */
+  cancel(target: StepLike): StepRef<string>;
 }
 
 export const step: StepFunction = Object.assign(
@@ -307,8 +357,42 @@ export const step: StepFunction = Object.assign(
       createStepBuilder({ afterDependencies: deps }),
     parallel: (...args: unknown[]): Step<string> =>
       buildParallelFromArgs(...args),
+    waitFor: (...steps: StepLike[]): StepRef<string> => buildWaitFor(...steps),
+    waitForAll: (): Step<string> => new Step<string>({ waitAll: true }),
+    cancel: (target: StepLike): StepRef<string> => buildCancel(target),
   },
 );
+
+/** Builds a `wait` step that depends on (and orders after) its targets. */
+function buildWaitFor(...steps: StepLike[]): StepRef<string> {
+  if (steps.length === 0) {
+    throw new Error("step.waitFor() requires at least one step");
+  }
+  const resolved = steps.map(unwrapStep);
+  for (const s of resolved) {
+    if (!s.config.id) {
+      throw new Error(
+        "step.waitFor() requires each referenced step to have an explicit id",
+      );
+    }
+  }
+  return new StepRef<string>(new Step<string>({ wait: resolved }), {
+    dependencies: resolved,
+  });
+}
+
+/** Builds a `cancel` step that depends on (and orders after) its target. */
+function buildCancel(target: StepLike): StepRef<string> {
+  const resolved = unwrapStep(target);
+  if (!resolved.config.id) {
+    throw new Error(
+      "step.cancel() requires the referenced step to have an explicit id",
+    );
+  }
+  return new StepRef<string>(new Step<string>({ cancel: resolved }), {
+    dependencies: [resolved],
+  });
+}
 
 /** Builds a parallel composite step from the given args. */
 function buildParallelFromArgs(...args: unknown[]): Step<string> {
@@ -383,6 +467,17 @@ export class StepRef<O extends string = never> {
 }
 
 // --- serialization helpers ---
+
+/** Resolves the explicit id of a step referenced by `wait`/`cancel`. */
+function waitCancelTargetId(item: StepLike): string {
+  const step = unwrapStep(item);
+  if (!step.config.id) {
+    throw new Error(
+      "a step referenced by `wait` or `cancel` must have an explicit id",
+    );
+  }
+  return step.config.id;
+}
 
 export function serializeConditionLike(c: ConditionLike): string {
   if (c instanceof Condition) {

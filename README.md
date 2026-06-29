@@ -462,6 +462,58 @@ steps:
         run: echo b
 ```
 
+## Background steps
+
+For finer control than `parallel` — long-running services, or non-blocking work
+that overlaps later steps — set `background: true` on a step and synchronize
+with `step.waitFor()`, `step.waitForAll()`, or `step.cancel()`.
+
+```ts
+const server = step({
+  id: "server",
+  name: "Start server",
+  run: "npm start",
+  background: true,
+});
+
+workflow({
+  ...,
+  jobs: [{
+    id: "e2e",
+    runsOn: "ubuntu-latest",
+    steps: [
+      server,
+      step({ name: "Run tests", run: "npm test" }),
+      step.waitFor(server),
+    ],
+  }],
+});
+```
+
+```yaml
+steps:
+  - name: Start server
+    id: server
+    run: npm start
+    background: true
+  - name: Run tests
+    run: npm test
+  - wait: server
+```
+
+- `step.waitFor(...steps)` → a `wait` step that blocks until the referenced
+  background steps finish (`wait: id`, or a list for several). It is ordered
+  after — and pulls in — the steps it waits on.
+- `step.waitForAll()` → a `wait-all` step that blocks until every active
+  background step finishes.
+- `step.cancel(step)` → a `cancel` step that terminates a background step.
+
+A background step must have an explicit `id` to be referenced by `waitFor` or
+`cancel`; otherwise the call throws. A maximum of 10 background steps run
+concurrently. Because ordering between background work and the steps that run
+alongside it is positional, list those steps in the order you want them (or use
+`comesAfter()`), the same as any other step.
+
 ## Typed matrix
 
 `defineMatrix()` gives you typed access to matrix values:
