@@ -9,8 +9,7 @@
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "jsr:@std/path@1": "1.1.4",
     "jsr:@std/path@^1.1.4": "1.1.4",
-    "jsr:@std/yaml@*": "1.0.11",
-    "jsr:@std/yaml@^1.0.11": "1.0.11",
+    "jsr:@std/yaml@^1.1.2": "1.1.2",
     "jsr:@ts-morph/bootstrap@0.27": "0.27.0",
     "jsr:@ts-morph/common@0.27": "0.27.0"
   },
@@ -53,8 +52,8 @@
         "jsr:@std/internal"
       ]
     },
-    "@std/yaml@1.0.11": {
-      "integrity": "bd139ce77f2d06cbed3713c8b26d301d2a2e12ecc7986130a268107e212143ee"
+    "@std/yaml@1.1.2": {
+      "integrity": "de612653c036749ba2044165e316f52412b0f0698afffb7ee80b5331d6d2abae"
     },
     "@ts-morph/bootstrap@0.27.0": {
       "integrity": "b8d7bc8f7942ce853dde4161b28f9aa96769cef3d8eebafb379a81800b9e2448",
@@ -74,7 +73,7 @@
     "dependencies": [
       "jsr:@deno/dnt@~0.42.3",
       "jsr:@std/assert@1",
-      "jsr:@std/yaml@^1.0.11"
+      "jsr:@std/yaml@^1.1.2"
     ]
   }
 }
