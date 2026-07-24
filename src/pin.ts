@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 export interface PinEntry {
   /** the original uses value, e.g. "actions/checkout@v6" */
@@ -16,16 +16,22 @@ export function isCommitHash(ref: string): boolean {
 export function parseActionUses(
   uses: string,
 ): { owner: string; repo: string; path: string; ref: string } | undefined {
-  if (uses.startsWith("./") || uses.startsWith("docker://")) return undefined;
+  // local actions and docker images are not pinnable
+  if (uses.startsWith("./") || uses.startsWith("../")) return undefined;
+  if (uses.startsWith("docker://")) return undefined;
   const atIndex = uses.lastIndexOf("@");
   if (atIndex === -1) return undefined;
   const beforeAt = uses.substring(0, atIndex);
   const ref = uses.substring(atIndex + 1);
+  if (ref.length === 0) return undefined;
   const parts = beforeAt.split("/");
   if (parts.length < 2) return undefined;
+  const owner = parts[0];
+  const repo = parts[1];
+  if (owner.length === 0 || repo.length === 0) return undefined;
   return {
-    owner: parts[0],
-    repo: parts[1],
+    owner,
+    repo,
     path: parts.slice(2).join("/"),
     ref,
   };
@@ -37,8 +43,11 @@ export function resolveRef(
   ref: string,
 ): string {
   const url = `https://github.com/${owner}/${repo}`;
-  const tagOutput = execSync(
-    `git ls-remote "${url}" "refs/tags/${ref}" "refs/tags/${ref}^{}"`,
+  // note: run git directly rather than through a shell so that refs
+  // containing shell metacharacters are passed along verbatim
+  const tagOutput = execFileSync(
+    "git",
+    ["ls-remote", url, `refs/tags/${ref}`, `refs/tags/${ref}^{}`],
     { encoding: "utf8", timeout: 30_000 },
   ).trim();
 
@@ -52,8 +61,9 @@ export function resolveRef(
     return lines[0].split(/\s+/)[0];
   }
 
-  const branchOutput = execSync(
-    `git ls-remote "${url}" "refs/heads/${ref}"`,
+  const branchOutput = execFileSync(
+    "git",
+    ["ls-remote", url, `refs/heads/${ref}`],
     { encoding: "utf8", timeout: 30_000 },
   ).trim();
 
@@ -87,60 +97,50 @@ export function pinYamlContent(
     }
   }
 
-  const content = yamlStr.replace(
-    /^(\s+(?:-\s+)?uses:\s+)(\S+)([^\n]*)$/gm,
-    (_match, prefix: string, usesValue: string, rest: string) => {
-      const parsed = parseActionUses(usesValue);
-      if (!parsed) return `${prefix}${usesValue}${rest}`;
+  const lines = yamlStr.split("\n");
+  for (const [index, line] of lines.entries()) {
+    const usesLine = parseUsesLine(line);
+    if (usesLine == null) continue;
+    const { prefix, scalar, rest, cr } = usesLine;
 
-      if (isCommitHash(parsed.ref)) {
-        // already pinned — recover the original ref from an inline comment
-        // or, failing that, from the legacy footer entries in the cache
-        const actionPath = usesValue.substring(0, usesValue.lastIndexOf("@"));
-        let originalRef: string | undefined;
+    // the yaml serializer quotes some values (ex. `docker://` images), so
+    // work with the unquoted value and put the quotes back on the way out
+    const { quote, value: usesValue } = splitQuotedScalar(scalar);
+    const parsed = parseActionUses(usesValue);
+    if (!parsed) continue;
 
-        const inlineMatch = rest.match(/^\s*#\s*(\S+)/);
-        if (inlineMatch) {
-          originalRef = inlineMatch[1];
-        } else if (cache) {
-          for (const entry of cache) {
-            const ep = parseActionUses(entry.original);
-            if (
-              ep &&
-              `${ep.owner}/${ep.repo}` === `${parsed.owner}/${parsed.repo}` &&
-              ep.path === parsed.path &&
-              entry.hash === parsed.ref
-            ) {
-              originalRef = ep.ref;
-              break;
-            }
-          }
-        }
-
-        if (!originalRef) return `${prefix}${usesValue}${rest}`;
-
-        const original = `${actionPath}@${originalRef}`;
-        if (!pins.some((p) => p.original === original)) {
-          pins.push({ original, hash: parsed.ref });
-        }
-        return `${prefix}${usesValue} # ${originalRef}`;
-      }
-
-      let hash = resolved.get(usesValue);
-      if (!hash) {
-        hash = resolve(parsed.owner, parsed.repo, parsed.ref);
-        resolved.set(usesValue, hash);
-      }
-      if (!pins.some((p) => p.original === usesValue)) {
-        pins.push({ original: usesValue, hash });
-      }
-
+    if (isCommitHash(parsed.ref)) {
+      // already pinned — recover the original ref from an inline comment
+      // or, failing that, from the legacy footer entries in the cache
       const actionPath = usesValue.substring(0, usesValue.lastIndexOf("@"));
-      return `${prefix}${actionPath}@${hash} # ${parsed.ref}`;
-    },
-  );
+      const originalRef = parsePinComment(rest) ??
+        findCachedRef(parsed, cache);
+      if (!originalRef) continue;
 
-  return { content, pins };
+      const original = `${actionPath}@${originalRef}`;
+      if (!pins.some((p) => p.original === original)) {
+        pins.push({ original, hash: parsed.ref });
+      }
+      lines[index] =
+        `${prefix}${quote}${usesValue}${quote} # ${originalRef}${cr}`;
+      continue;
+    }
+
+    let hash = resolved.get(usesValue);
+    if (!hash) {
+      hash = resolve(parsed.owner, parsed.repo, parsed.ref);
+      resolved.set(usesValue, hash);
+    }
+    if (!pins.some((p) => p.original === usesValue)) {
+      pins.push({ original: usesValue, hash });
+    }
+
+    const actionPath = usesValue.substring(0, usesValue.lastIndexOf("@"));
+    lines[index] =
+      `${prefix}${quote}${actionPath}@${hash}${quote} # ${parsed.ref}${cr}`;
+  }
+
+  return { content: lines.join("\n"), pins };
 }
 
 /**
@@ -152,16 +152,19 @@ export function parsePinComments(content: string): PinEntry[] {
   const pins: PinEntry[] = [];
   const seen = new Set<string>();
 
-  const inlineRe = /^\s+(?:-\s+)?uses:\s+(\S+?)@([0-9a-f]{40})\s+#\s*(\S+)/gm;
-  let m;
-  while ((m = inlineRe.exec(content)) !== null) {
-    const original = `${m[1]}@${m[3]}`;
-    if (seen.has(original)) continue;
-    seen.add(original);
-    pins.push({ original, hash: m[2] });
+  for (const line of content.split("\n")) {
+    const usesLine = parseUsesLine(line);
+    if (usesLine == null) continue;
+    const entry = parseInlinePin(usesLine.scalar, usesLine.rest);
+    if (entry == null || seen.has(entry.original)) continue;
+    seen.add(entry.original);
+    pins.push(entry);
   }
 
+  // note: `$` in multiline mode also matches before the carriage return of a
+  // crlf line ending, so this reads crlf files as-is
   const footerRe = /^# gagen:pin (.+) = ([0-9a-f]{40})$/gm;
+  let m;
   while ((m = footerRe.exec(content)) !== null) {
     if (seen.has(m[1])) continue;
     seen.add(m[1]);
@@ -241,8 +244,36 @@ export function pullVersionsInSource(
 }
 
 /**
+ * Replaces the tag/branch ref of every `uses` value in a parsed YAML object
+ * with the hash it is pinned to in the given pin mapping.
+ *
+ * This is the direction to compare in when linting. Mapping an original ref
+ * to a hash is a function, whereas the reverse is not: two refs commonly
+ * resolve to the same commit (ex. `v1` and `v1.0.0` when the major tag points
+ * at the latest patch), so a hash on its own does not say which ref wrote it.
+ */
+export function pinParsedYaml(
+  obj: unknown,
+  pins: readonly PinEntry[],
+): unknown {
+  if (pins.length === 0) return obj;
+
+  const originalToPinned = new Map<string, string>();
+  for (const pin of pins) {
+    const actionPath = pin.original.substring(0, pin.original.lastIndexOf("@"));
+    originalToPinned.set(pin.original, `${actionPath}@${pin.hash}`);
+  }
+
+  pinUsesValues(obj, originalToPinned);
+  return obj;
+}
+
+/**
  * Replaces pinned hashes in a parsed YAML object with their original
  * tag/branch refs using the provided pin mapping.
+ *
+ * Prefer `pinParsedYaml` when comparing a generated file against its source:
+ * a hash may correspond to more than one ref, so this direction is lossy.
  */
 export function unpinParsedYaml(
   obj: unknown,
@@ -305,4 +336,154 @@ function unpinStep(
       unpinStep(child, hashToOriginal);
     }
   }
+}
+
+/** Rewrites every `uses` value found anywhere in the tree. */
+function pinUsesValues(
+  node: unknown,
+  originalToPinned: ReadonlyMap<string, string>,
+): void {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      pinUsesValues(item, originalToPinned);
+    }
+    return;
+  }
+  if (typeof node !== "object" || node === null) return;
+  const record = node as Record<string, unknown>;
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "uses" && typeof value === "string") {
+      const pinned = originalToPinned.get(value);
+      if (pinned != null) record[key] = pinned;
+    } else {
+      pinUsesValues(value, originalToPinned);
+    }
+  }
+}
+
+/** The parts of a yaml `uses:` line. */
+interface UsesLine {
+  /** the indentation, list dash, key, and the spacing after it */
+  prefix: string;
+  /** the value, which the yaml serializer sometimes quotes */
+  scalar: string;
+  /** what follows the value, which is the pin comment when there is one */
+  rest: string;
+  /** the carriage return of a crlf line ending */
+  cr: string;
+}
+
+/**
+ * Splits a yaml `uses:` line into its parts, or gets undefined when the line
+ * is not one. Both the pin writer and the pin reader go through this so that
+ * they cannot drift apart on the format.
+ *
+ * The carriage return is kept out of `rest` because the writer replaces
+ * `rest` with a freshly built comment: folding the two together would leave
+ * an lf ending behind on every line that got pinned.
+ */
+function parseUsesLine(line: string): UsesLine | undefined {
+  // a `uses:` key is always indented, either directly or after a list dash
+  let index = skipSpaces(line, 0);
+  if (index === 0) return undefined;
+  if (line.startsWith("-", index)) {
+    const afterDash = skipSpaces(line, index + 1);
+    if (afterDash === index + 1) return undefined;
+    index = afterDash;
+  }
+
+  const key = "uses:";
+  if (!line.startsWith(key, index)) return undefined;
+  const valueStart = skipSpaces(line, index + key.length);
+  if (valueStart === index + key.length) return undefined;
+
+  let valueEnd = valueStart;
+  while (valueEnd < line.length && !isLineSpace(line[valueEnd])) {
+    valueEnd++;
+  }
+  if (valueEnd === valueStart) return undefined;
+
+  const trailing = line.substring(valueEnd);
+  const hasCr = trailing.endsWith("\r");
+  return {
+    prefix: line.substring(0, valueStart),
+    scalar: line.substring(valueStart, valueEnd),
+    rest: hasCr ? trailing.substring(0, trailing.length - 1) : trailing,
+    cr: hasCr ? "\r" : "",
+  };
+}
+
+/** Gets the index of the first character that is not a space or tab. */
+function skipSpaces(line: string, index: number): number {
+  while (index < line.length && isLineSpace(line[index])) {
+    index++;
+  }
+  return index;
+}
+
+function isLineSpace(char: string): boolean {
+  return char === " " || char === "\t" || char === "\r";
+}
+
+/**
+ * Parses a pin out of the value and trailing text of a `uses:` line
+ * (ex. `owner/repo@<sha>` followed by ` # v1`).
+ */
+function parseInlinePin(scalar: string, rest: string): PinEntry | undefined {
+  const { value } = splitQuotedScalar(scalar);
+  const atIndex = value.lastIndexOf("@");
+  if (atIndex === -1) return undefined;
+  const hash = value.substring(atIndex + 1);
+  if (!isCommitHash(hash)) return undefined;
+  const ref = parsePinComment(rest);
+  if (ref == null) return undefined;
+  const actionPath = value.substring(0, atIndex);
+  return { original: `${actionPath}@${ref}`, hash };
+}
+
+/** Gets the ref recorded in the inline comment of a pinned `uses:` line. */
+function parsePinComment(rest: string): string | undefined {
+  const start = skipSpaces(rest, 0);
+  if (rest[start] !== "#") return undefined;
+  const refStart = skipSpaces(rest, start + 1);
+  let refEnd = refStart;
+  while (refEnd < rest.length && !isLineSpace(rest[refEnd])) {
+    refEnd++;
+  }
+  if (refEnd === refStart) return undefined;
+  return rest.substring(refStart, refEnd);
+}
+
+/** Gets the ref a cached pin recorded for an action already pinned to a hash. */
+function findCachedRef(
+  parsed: { owner: string; repo: string; path: string; ref: string },
+  cache: readonly PinEntry[] | undefined,
+): string | undefined {
+  for (const entry of cache ?? []) {
+    const cached = parseActionUses(entry.original);
+    if (
+      cached &&
+      cached.owner === parsed.owner &&
+      cached.repo === parsed.repo &&
+      cached.path === parsed.path &&
+      entry.hash === parsed.ref
+    ) {
+      return cached.ref;
+    }
+  }
+  return undefined;
+}
+
+/** Splits the surrounding quotes, if any, off a yaml scalar. */
+function splitQuotedScalar(scalar: string): { quote: string; value: string } {
+  for (const quote of ["'", '"']) {
+    if (
+      scalar.length >= 2 &&
+      scalar.startsWith(quote) &&
+      scalar.endsWith(quote)
+    ) {
+      return { quote, value: scalar.slice(1, -1) };
+    }
+  }
+  return { quote: "", value: scalar };
 }
