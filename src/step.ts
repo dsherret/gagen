@@ -7,9 +7,18 @@ import {
   sourcesFrom,
 } from "./expression.ts";
 
+/** Anything usable as an `if` condition: a Condition, an expression, or raw text. */
 export type ConditionLike = Condition | ExpressionValue | string;
+/** A value usable in a step's `with`/`env` map. */
 export type ConfigValue = string | number | boolean | ExpressionValue;
 
+/**
+ * The declarative configuration of a single step.
+ *
+ * A config object must not be mutated after it has been used: `id`, `outputs`
+ * and the shape validation are consumed when the {@linkcode Step} is built, and
+ * the object doubles as the identity of the step it produced.
+ */
 export interface StepConfig<O extends string = never> {
   readonly name?: string;
   readonly id?: string;
@@ -44,11 +53,29 @@ export interface StepConfig<O extends string = never> {
 
 let stepCounter = 0;
 
-// exported for testing only
+// declared ahead of Step because its constructor populates them
+const stepsByConfig = new WeakMap<StepConfig<string>, Step<string>>();
+const crossJobDepsByStep = new WeakMap<
+  Step<string>,
+  readonly Step<string>[]
+>();
+const EMPTY_STEPS: readonly Step<string>[] = Object.freeze([]);
+
+/**
+ * Resets the counter used to generate internal step ids.
+ *
+ * This deliberately does not clear the config-to-step memo table: a config
+ * object already turned into a step keeps that step, and therefore its id.
+ * Generated ids never reach the YAML and steps are identified by object
+ * identity, so a reused id is harmless.
+ *
+ * Exported for testing only.
+ */
 export function resetStepCounter(): void {
   stepCounter = 0;
 }
 
+/** Anything accepted where a step is expected. */
 export type StepLike = Step<string> | StepRef<string> | StepConfig;
 
 /**
@@ -58,20 +85,28 @@ export type StepLike = Step<string> | StepRef<string> | StepConfig;
  */
 export type CompositeKind = "sequential" | "parallel";
 
+/**
+ * A single workflow step, or a composite grouping several steps together.
+ *
+ * Instances are immutable — `dependsOn`, `comesAfter` and `if` return a
+ * {@link StepRef} carrying the per-usage modifiers rather than mutating the
+ * step, so the same step can be reused across jobs with different conditions.
+ */
 export class Step<O extends string = never> implements ExpressionSource {
   readonly #id: string;
   readonly #kind: CompositeKind;
+  /** The configuration this step was created from (empty for composites). */
   readonly config: StepConfig<O>;
+  /** Typed expressions for the outputs declared by `config.outputs`. */
   readonly outputs: { [K in O]: ExpressionValue };
-  // cross-job step references for needs inference (e.g., artifact download → upload)
-  readonly _crossJobDeps: readonly Step<string>[];
+  /** The children of a composite step, or an empty array for a leaf step. */
   readonly children: readonly StepLike[];
 
-  constructor(config: StepConfig<O>, crossJobDeps?: Step<string>[]);
+  constructor(config: StepConfig<O>, crossJobDeps?: readonly Step<string>[]);
   constructor(children: readonly StepLike[], kind?: CompositeKind);
   constructor(
     configOrChildren: StepConfig<O> | readonly StepLike[],
-    second?: Step<string>[] | CompositeKind,
+    second?: readonly Step<string>[] | CompositeKind,
   ) {
     if (Array.isArray(configOrChildren)) {
       // composite step (group of children)
@@ -81,14 +116,13 @@ export class Step<O extends string = never> implements ExpressionSource {
       this.#id = `_step_${stepCounter++}`;
       this.#kind = (second as CompositeKind | undefined) ?? "sequential";
       this.config = {} as StepConfig<O>;
-      this._crossJobDeps = Object.freeze([]);
       this.outputs = {} as { [K in O]: ExpressionValue };
       this.children = Object.freeze([...configOrChildren] as StepLike[]);
       return;
     }
 
     this.#kind = "sequential";
-    const crossJobDeps = second as Step<string>[] | undefined;
+    const crossJobDeps = second as readonly Step<string>[] | undefined;
     const config = configOrChildren as StepConfig<O>;
     if (config.outputs?.length && !config.id) {
       throw new Error(
@@ -99,7 +133,18 @@ export class Step<O extends string = never> implements ExpressionSource {
 
     this.#id = config.id ?? `_step_${stepCounter++}`;
     this.config = config;
-    this._crossJobDeps = Object.freeze(crossJobDeps ?? []);
+
+    const self = this as unknown as Step<string>;
+    if (crossJobDeps != null) {
+      // kept by reference (not copied) so entries appended after this step was
+      // created — an artifact uploaded later in the file, say — are still seen
+      crossJobDepsByStep.set(self, crossJobDeps);
+    }
+    // register here rather than only in stepFromConfig so that every route to a
+    // step — including `new Step(config)` — agrees on one step per config object
+    if (!stepsByConfig.has(config)) {
+      stepsByConfig.set(config, self);
+    }
 
     // build typed outputs
     const outputs = {} as { [K in O]: ExpressionValue };
@@ -116,6 +161,7 @@ export class Step<O extends string = never> implements ExpressionSource {
     this.children = Object.freeze([] as StepLike[]);
   }
 
+  /** The explicit `config.id`, or a generated internal id. */
   get id(): string {
     return this.#id;
   }
@@ -125,18 +171,25 @@ export class Step<O extends string = never> implements ExpressionSource {
     return this.#kind;
   }
 
+  /** Orders this step after `deps`, pulling them into the job if absent. */
   dependsOn(...deps: StepLike[]): StepRef<O> {
     return new StepRef(this, { dependencies: deps });
   }
 
+  /** Orders this step after `deps`, but only those already in the job. */
   comesAfter(...deps: StepLike[]): StepRef<O> {
     return new StepRef(this, { afterDependencies: deps });
   }
 
+  /** Applies a condition to this usage of the step. */
   if(condition: ConditionLike): StepRef<O> {
     return new StepRef(this, { condition });
   }
 
+  /**
+   * Serializes this step to its YAML object form. `effectiveIf` overrides
+   * `config.if` with the condition resolved by the job's dependency graph.
+   */
   toYaml(effectiveIf?: Condition): Record<string, unknown> {
     const result: Record<string, unknown> = {};
 
@@ -247,17 +300,9 @@ function buildStepFromArgs(...args: unknown[]): Step<string> {
       // condition/deps/afterDeps (unwrapping to arg.step would discard them)
       return new Step([arg]);
     }
-    return new Step(arg as StepConfig);
+    return stepFromConfig(arg as StepConfig);
   }
-  const children: StepLike[] = [];
-  for (const item of args) {
-    if (item instanceof Step || item instanceof StepRef) {
-      children.push(item);
-    } else {
-      children.push(new Step(item as StepConfig));
-    }
-  }
-  return new Step(children);
+  return new Step(args.map((item) => normalizeStepLike(item as StepLike)));
 }
 
 function andConditions(
@@ -411,20 +456,25 @@ function buildParallelFromArgs(...args: unknown[]): Step<string> {
   if (args.length === 0) {
     throw new Error("step.parallel() requires at least one argument");
   }
-  const children: StepLike[] = args.map((item) =>
-    item instanceof Step || item instanceof StepRef
-      ? item
-      : new Step(item as StepConfig)
-  );
+  const children = args.map((item) => normalizeStepLike(item as StepLike));
   return new Step(children, "parallel");
 }
 
 // --- StepRef: immutable wrapper for per-usage deps/conditions ---
 
+/**
+ * One usage of a {@link Step} within a job, carrying the modifiers applied at
+ * that usage. Modifier methods return a new StepRef rather than mutating, so a
+ * step can appear in several places with different conditions and dependencies.
+ */
 export class StepRef<O extends string = never> {
+  /** The step this reference wraps. */
   readonly step: Step<O>;
+  /** The condition applied to this usage, ANDed with the step's own `if`. */
   readonly condition?: ConditionLike;
+  /** Steps ordered before this usage, pulled into the job if absent. */
   readonly dependencies: readonly StepLike[];
+  /** Steps ordered before this usage, but only those already in the job. */
   readonly afterDependencies: readonly StepLike[];
 
   constructor(
@@ -441,18 +491,22 @@ export class StepRef<O extends string = never> {
     this.afterDependencies = init?.afterDependencies ?? [];
   }
 
+  /** The wrapped step's id. */
   get id(): string {
     return this.step.id;
   }
 
+  /** The wrapped step's config. */
   get config(): StepConfig<O> {
     return this.step.config;
   }
 
+  /** The wrapped step's typed output expressions. */
   get outputs(): { [K in O]: ExpressionValue } {
     return this.step.outputs;
   }
 
+  /** Adds dependencies, pulling them into the job if absent. */
   dependsOn(...deps: StepLike[]): StepRef<O> {
     return new StepRef(this.step, {
       condition: this.condition,
@@ -461,6 +515,7 @@ export class StepRef<O extends string = never> {
     });
   }
 
+  /** Adds ordering-only dependencies on steps already in the job. */
   comesAfter(...deps: StepLike[]): StepRef<O> {
     return new StepRef(this.step, {
       condition: this.condition,
@@ -469,6 +524,7 @@ export class StepRef<O extends string = never> {
     });
   }
 
+  /** ANDs an additional condition onto this usage. */
   if(condition: ConditionLike): StepRef<O> {
     return new StepRef(this.step, {
       condition: andConditions(this.condition, condition),
@@ -487,7 +543,12 @@ export class StepRef<O extends string = never> {
  */
 function assertStepShape(config: StepConfig<string>): void {
   const controlKeys: string[] = [];
-  if (config.wait != null) controlKeys.push("wait");
+  if (config.wait != null) {
+    if (Array.isArray(config.wait) && config.wait.length === 0) {
+      throw new Error("A wait step must reference at least one step.");
+    }
+    controlKeys.push("wait");
+  }
   if (config.waitAll) controlKeys.push("wait-all");
   if (config.cancel != null) controlKeys.push("cancel");
   if (controlKeys.length > 1) {
@@ -520,6 +581,7 @@ function waitCancelTargetId(item: StepLike): string {
   return step.config.id;
 }
 
+/** Renders a condition as the raw expression text used in an `if` field. */
 export function serializeConditionLike(c: ConditionLike): string {
   if (c instanceof Condition) {
     return c.toExpression();
@@ -530,6 +592,7 @@ export function serializeConditionLike(c: ConditionLike): string {
   }
 }
 
+/** Converts a ConditionLike to a Condition, preserving its expression sources. */
 export function toCondition(c: ConditionLike): Condition {
   if (c instanceof Condition) return c;
   if (c instanceof ExpressionValue) {
@@ -538,6 +601,7 @@ export function toCondition(c: ConditionLike): Condition {
   return new RawCondition(c, new Set());
 }
 
+/** Serializes a `with`/`env` map, wrapping expressions in `${{ }}`. */
 export function serializeConfigValues(
   record: Record<string, ConfigValue>,
 ): Record<string, string | number | boolean> {
@@ -555,7 +619,7 @@ export function normalizeStepLike(
   item: StepLike,
 ): Step<string> | StepRef<string> {
   if (item instanceof Step || item instanceof StepRef) return item;
-  return new Step(item as StepConfig);
+  return stepFromConfig(item);
 }
 
 /** Extracts the underlying Step from a StepLike (Step or StepRef). */
@@ -571,4 +635,31 @@ export function unwrapSteps(item: StepLike): Step<string>[] {
     return s.children.flatMap(unwrapSteps);
   }
   return [s];
+}
+
+/**
+ * Returns the cross-job step references a step was created with, used to infer
+ * job `needs` — an artifact download referencing its uploads, for example.
+ *
+ * Resolved on each call rather than captured at construction, so steps
+ * registered after this one was created are still picked up. The returned array
+ * is a copy; the underlying list stays owned by whoever registered it.
+ */
+export function crossJobDepsOf(step: Step<string>): readonly Step<string>[] {
+  const deps = crossJobDepsByStep.get(step);
+  return deps == null ? EMPTY_STEPS : [...deps];
+}
+
+/**
+ * Returns the Step for a plain config object, creating it on first use.
+ *
+ * The mapping is memoized so that a config object used in more than one place —
+ * listed in `steps` and also passed to `dependsOn`, say — always resolves to the
+ * same Step. Steps are identified by object identity when the job's dependency
+ * graph is built, so creating a fresh Step per use would emit duplicates and
+ * silently drop ordering edges.
+ */
+function stepFromConfig(config: StepConfig): Step<string> {
+  // the Step constructor registers itself, so constructing is enough to memoize
+  return stepsByConfig.get(config) ?? new Step(config);
 }

@@ -22,21 +22,53 @@ function serializeValue(value: unknown): unknown {
   return value;
 }
 
-export class Matrix<_K extends string> {
-  readonly #def: Record<string, unknown>;
+// declared ahead of Matrix because its constructor populates it
+const matrixDefs = new WeakMap<Matrix<string>, Record<string, unknown>>();
 
+/**
+ * A build matrix. Each matrix key is exposed as a property holding the
+ * `matrix.<key>` expression, so keys can be referenced directly in step
+ * configuration and conditions.
+ */
+export class Matrix<_K extends string> {
   constructor(def: Record<string, unknown>, keys: string[]) {
-    this.#def = def;
+    // held outside the class so that neither the definition nor an accessor for
+    // it becomes public API — a `def`/`sources` member would also collide with
+    // the shadow check below, and both are plausible matrix dimension names
+    matrixDefs.set(this as Matrix<string>, def);
     for (const key of keys) {
+      if (key in this) {
+        // silently overwriting would break the shadowed member — `toYaml`
+        // in particular is called when the matrix is serialized
+        throw new Error(
+          `Matrix key "${key}" conflicts with a Matrix member — rename the key.`,
+        );
+      }
       (this as Record<string, unknown>)[key] = new ExpressionValue(
         `matrix.${key}`,
       );
     }
   }
 
+  /** Serializes the matrix definition to its YAML form. */
   toYaml(): Record<string, unknown> {
-    return serializeValue(this.#def) as Record<string, unknown>;
+    return serializeValue(matrixDefOf(this as Matrix<string>)) as Record<
+      string,
+      unknown
+    >;
   }
+}
+
+/**
+ * Returns the raw definition a matrix was built from, with any Condition and
+ * ExpressionValue entries left intact.
+ *
+ * Needed to infer job `needs` from expressions embedded in a matrix — the
+ * definition is otherwise only reachable through `toYaml`, which has already
+ * flattened those entries to strings.
+ */
+export function matrixDefOf(matrix: Matrix<string>): Record<string, unknown> {
+  return matrixDefs.get(matrix) ?? {};
 }
 
 type MatrixWithExprs<K extends string> =
@@ -45,6 +77,11 @@ type MatrixWithExprs<K extends string> =
     readonly [P in K]: ExpressionValue;
   };
 
+/**
+ * Defines a build matrix, returning it with a typed property per matrix key
+ * (including keys introduced by `include` entries) holding that key's
+ * `matrix.<key>` expression.
+ */
 export function defineMatrix<const T extends Record<string, unknown>>(
   def: T,
 ): MatrixWithExprs<ExtractMatrixKeys<T>> {
