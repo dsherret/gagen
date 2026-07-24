@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@david/code-block-writer@^13.0.3": "13.0.3",
+    "jsr:@david/publish-on-tag@0.2.0": "0.2.0",
     "jsr:@deno/dnt@~0.42.3": "0.42.3",
     "jsr:@std/assert@1": "1.0.18",
     "jsr:@std/fmt@1": "1.0.9",
@@ -9,6 +10,7 @@
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "jsr:@std/path@1": "1.1.4",
     "jsr:@std/path@^1.1.4": "1.1.4",
+    "jsr:@std/semver@1": "1.0.8",
     "jsr:@std/yaml@^1.1.2": "1.1.2",
     "jsr:@ts-morph/bootstrap@0.27": "0.27.0",
     "jsr:@ts-morph/common@0.27": "0.27.0"
@@ -16,6 +18,12 @@
   "jsr": {
     "@david/code-block-writer@13.0.3": {
       "integrity": "f98c77d320f5957899a61bfb7a9bead7c6d83ad1515daee92dbacc861e13bb7f"
+    },
+    "@david/publish-on-tag@0.2.0": {
+      "integrity": "6a4abcc352141e46e705041ca73836176d64cebc1080b6d915de630df9853dea",
+      "dependencies": [
+        "jsr:@std/semver"
+      ]
     },
     "@deno/dnt@0.42.3": {
       "integrity": "62a917a0492f3c8af002dce90605bb0d41f7d29debc06aca40dba72ab65d8ae3",
@@ -51,6 +59,9 @@
       "dependencies": [
         "jsr:@std/internal"
       ]
+    },
+    "@std/semver@1.0.8": {
+      "integrity": "dc830e8b8b6a380c895d53fbfd1258dc253704ca57bbe1629ac65fd7830179b7"
     },
     "@std/yaml@1.1.2": {
       "integrity": "de612653c036749ba2044165e316f52412b0f0698afffb7ee80b5331d6d2abae"
