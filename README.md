@@ -112,7 +112,7 @@ const lintStep = step({
 
 ## CLI
 
-If you store your generations scripts beside your `.yml` files in the
+If you store your generation scripts beside your `.yml` files in the
 `.github/workflows` folder, then you can automatically run all these scripts by
 using the `gagen` binary:
 
@@ -123,12 +123,18 @@ npx gagen
 # lint the output
 npx gagen --lint
 
+# re-resolve all the pinned action hashes
+npx gagen --update-pins
+
 # pull version bumps from generated yaml back into the source scripts
 # (useful after dependabot updates a .generated.yml)
 npx gagen --pull-versions
+
+# show all the flags
+npx gagen --help
 ```
 
-The requires your scripts to use the `writeOrLint` function.
+This requires your scripts to use the `writeOrLint` function.
 
 ### `--pull-versions`
 
@@ -196,6 +202,14 @@ wf.writeOrLint({
   pinDeps: { resolve: (owner, repo, ref) => lookupHash(owner, repo, ref) },
 });
 ```
+
+Limitations:
+
+- Pins are written into the output line by line, so a `uses: owner/repo@ref`
+  line that appears inside a `run: |` script block gets rewritten as if it were
+  a real step. Keep such lines out of run scripts, or set `pinDeps` to `false`
+  for that workflow.
+- Local (`./action`) and `docker://` references are never pinned.
 
 ## Conditions
 

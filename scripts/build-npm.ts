@@ -1,5 +1,7 @@
 import { build, emptyDir } from "@deno/dnt";
 
+const version = Deno.args[0] || "0.0.0";
+
 await emptyDir("./npm");
 
 await build({
@@ -15,7 +17,7 @@ await build({
   },
   package: {
     name: "gagen",
-    version: Deno.args[0],
+    version,
     description:
       "Generate complex GitHub Actions YAML files using a declarative API.",
     license: "MIT",

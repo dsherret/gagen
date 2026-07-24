@@ -3,6 +3,8 @@
   "license": "MIT",
   "tasks": {
     "generate": "deno run -A jsr:@david/gagen",
+    "test": "deno test -A",
+    "check": "deno fmt --check && deno lint && deno check .",
     "build:npm": "deno run -A ./scripts/build-npm.ts"
   },
   "imports": {
@@ -18,6 +20,13 @@
   "exports": {
     ".": "./src/mod.ts",
     "./cli": "./src/cli.ts"
+  },
+  "publish": {
+    "exclude": [
+      "**/*_test.ts",
+      "./scripts",
+      "./.github"
+    ]
   },
   "exclude": [
     "./npm"
