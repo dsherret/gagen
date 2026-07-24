@@ -3,15 +3,23 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 import { collectActionVersions, pullVersionsInSource } from "./pin.ts";
+import { assertKnownFlags } from "./workflow.ts";
 
 export async function runCli() {
+  const args = process.argv.slice(2);
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(helpText());
+    return;
+  }
+  assertKnownFlags(args);
+
   const workflowsDir = findWorkflowsDir();
   if (workflowsDir == null) {
     console.error("No .github/workflows directory found.");
     process.exit(1);
   }
 
-  if (process.argv.includes("--pull-versions")) {
+  if (args.includes("--pull-versions")) {
     pullVersions(workflowsDir);
     return;
   }
@@ -28,7 +36,8 @@ export async function runCli() {
     process.exit(1);
   }
 
-  const isLinting = process.argv.includes("--lint");
+  const isLinting = args.includes("--lint");
+  let ranAny = false;
   for (const file of tsFiles) {
     const fullPath = resolve(workflowsDir, file);
     const content = fs.readFileSync(fullPath, "utf8");
@@ -36,7 +45,15 @@ export async function runCli() {
     const label = isLinting ? "Linting" : "Generating";
     const color = isLinting ? "\x1b[36m" : "\x1b[32m";
     console.error(`${color}${label}\x1b[0m ${file}`);
+    ranAny = true;
     await import(pathToFileURL(fullPath).href);
+  }
+
+  if (!ranAny) {
+    console.error(
+      "No script files in .github/workflows use writeOrLint — nothing to do.",
+    );
+    process.exit(1);
   }
 }
 
@@ -103,6 +120,25 @@ function findWorkflowsDir(): string | undefined {
     if (parent === dir) return undefined;
     dir = parent;
   }
+}
+
+function helpText(): string {
+  return `gagen — generate GitHub Actions workflows from TypeScript
+
+Usage:
+  gagen [options]
+
+Runs every script in the closest .github/workflows directory that uses
+\`writeOrLint\`.
+
+Options:
+  --lint           verify the generated files are up to date instead of
+                   writing them, exiting non-zero when they are not
+  --update-pins    re-resolve every pinned action instead of reusing the
+                   hashes stored in the generated files
+  --pull-versions  update the action versions in the scripts to match the
+                   versions in the generated yaml files
+  -h, --help       show this help text`;
 }
 
 if (import.meta.main) {
