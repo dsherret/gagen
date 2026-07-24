@@ -5,11 +5,12 @@ import {
   isAlwaysFalse,
   isAlwaysTrue,
 } from "./expression.ts";
-import { Matrix } from "./matrix.ts";
+import { Matrix, matrixDefOf } from "./matrix.ts";
 import type { Permissions } from "./permissions.ts";
 import {
   type ConditionLike,
   type ConfigValue,
+  crossJobDepsOf,
   normalizeStepLike,
   serializeConditionLike,
   serializeConfigValues,
@@ -29,6 +30,7 @@ interface CommonJobFields {
   continueOnError?: boolean | string;
 }
 
+/** A Docker container used as a job `container` or as a job service. */
 export interface ServiceContainer {
   image: string;
   credentials?: { username: string; password: string | ExpressionValue };
@@ -38,12 +40,19 @@ export interface ServiceContainer {
   options?: string;
 }
 
+/** The runner(s) a job runs on. */
 export type RunsOn =
   | string
   | ExpressionValue
   | readonly string[]
   | { group?: string; labels?: string | readonly string[] };
 
+/** Default settings applied to every `run` step of a job or workflow. */
+export interface JobDefaults {
+  run?: { shell?: string; workingDirectory?: string };
+}
+
+/** Configuration shared by every job that runs its own steps. */
 export interface StepsJobConfig extends CommonJobFields {
   runsOn: RunsOn;
   strategy?: {
@@ -53,7 +62,7 @@ export interface StepsJobConfig extends CommonJobFields {
   };
   env?: Record<string, ConfigValue>;
   timeoutMinutes?: number;
-  defaults?: { run?: { shell?: string; workingDirectory?: string } };
+  defaults?: JobDefaults;
   environment?:
     | { name: string | ExpressionValue; url?: string }
     | string
@@ -62,24 +71,29 @@ export interface StepsJobConfig extends CommonJobFields {
   container?: ServiceContainer | string;
 }
 
+/** Configuration for a job that calls a reusable workflow. */
 export interface ReusableJobConfig extends CommonJobFields {
   uses: string;
   with?: Record<string, ConfigValue>;
   secrets?: "inherit" | Record<string, ConfigValue>;
 }
 
+/** Configuration for a job, without its identity or steps. */
 export type JobConfig = StepsJobConfig | ReusableJobConfig;
 
+/** A steps job as declared in a `workflow({ jobs })` array. */
 export interface StepsJobDef extends StepsJobConfig {
   id?: string;
   steps: StepLike | StepLike[];
   outputs?: Record<string, ExpressionValue>;
 }
 
+/** A reusable workflow job as declared in a `workflow({ jobs })` array. */
 export interface ReusableJobDef extends ReusableJobConfig {
   id?: string;
 }
 
+/** A job as declared in a `workflow({ jobs })` array. */
 export type JobDef = StepsJobDef | ReusableJobDef;
 
 // --- per-job dependency graph ---
@@ -183,6 +197,41 @@ function propagatableCondition(
 /** Returns a step's config.if if it is safe to propagate to dependencies. */
 function propagatableConfigIf(step: Step<string>): ConditionLike | undefined {
   return propagatableCondition(step.config.if);
+}
+
+/**
+ * Computes the condition under which a step tree runs, for the purpose of
+ * gating its dependencies. A group runs when any of its members runs, and a
+ * member's own condition is its `StepRef` condition ANDed with its `config.if`
+ * — reading only `config.if` would miss `step.if(a)(...)` members, whose
+ * condition lives on the wrapping `StepRef`.
+ *
+ * Returns undefined when the tree may run unconditionally or when a condition
+ * cannot be propagated to dependencies; both mean the dependency stays ungated,
+ * which is always the safe direction.
+ */
+function propagatableRunCondition(item: StepLike): ConditionLike | undefined {
+  const normalized = normalizeStepLike(item);
+
+  if (normalized instanceof StepRef) {
+    const inner = propagatableRunCondition(normalized.step);
+    if (normalized.condition == null) return inner;
+    const own = propagatableCondition(normalized.condition);
+    if (own == null) return undefined;
+    return combineAndConditions(own, inner);
+  }
+
+  if (normalized.children.length === 0) {
+    return propagatableConfigIf(normalized);
+  }
+
+  const childConditions: Condition[] = [];
+  for (const child of normalized.children) {
+    const condition = propagatableRunCondition(child);
+    if (condition == null) return undefined;
+    childConditions.push(toCondition(condition));
+  }
+  return simplifyOrConditions(childConditions) ?? undefined;
 }
 
 interface DeferredAfterDep {
@@ -289,30 +338,16 @@ function flattenStepLike(
           ),
         );
       }
-      // compute aggregate dep context: context AND (OR of children's
-      // config.ifs). If any child is unconditional, or the OR is a tautology,
+      // Compute the aggregate dep context: context AND (OR of the members' own
+      // conditions). If any member is unconditional, or the OR is a tautology,
       // just use the context. The context is filtered so an output-referencing
       // condition doesn't propagate to dependencies (circular dependency).
       const depBaseCtx = propagatableCondition(newContext);
       let compositeDepsCtx: ConditionLike | undefined = depBaseCtx;
       if (item.dependencies.length > 0) {
-        const childIfs: ConditionLike[] = [];
-        let allConditional = true;
-        for (const s of contributed) {
-          const cif = propagatableConfigIf(s);
-          if (cif == null) {
-            allConditional = false;
-            break;
-          }
-          childIfs.push(cif);
-        }
-        if (allConditional && childIfs.length > 0) {
-          const orCond = simplifyOrConditions(
-            childIfs.map((c) => toCondition(c)),
-          );
-          if (orCond != null) {
-            compositeDepsCtx = combineAndConditions(depBaseCtx, orCond);
-          }
+        const membersCondition = propagatableRunCondition(step);
+        if (membersCondition != null) {
+          compositeDepsCtx = combineAndConditions(depBaseCtx, membersCondition);
         }
       }
 
@@ -454,11 +489,16 @@ function addConditionSourceDeps(
 
 // --- Job class ---
 
+/**
+ * A resolved job. Prefer the `job()` free function over constructing this
+ * directly.
+ */
 export class Job implements ExpressionSource {
   readonly #id: string;
   readonly #config: JobConfig;
   readonly #leafItems: StepLike[] = [];
   readonly #outputDefs: Record<string, ExpressionValue> = {};
+  /** Expressions referencing this job's outputs from a dependent job. */
   readonly outputs: Readonly<Record<string, ExpressionValue>> = {};
 
   // cached graph — built lazily
@@ -474,6 +514,7 @@ export class Job implements ExpressionSource {
       outputs?: Record<string, ExpressionValue>;
     },
   ) {
+    assertValidJobId(id);
     this.#id = id;
     this.#config = config;
 
@@ -495,6 +536,7 @@ export class Job implements ExpressionSource {
     }
   }
 
+  /** The job's id, used as its key in the workflow's `jobs` map. */
   get id(): string {
     return this.#id;
   }
@@ -631,6 +673,11 @@ export class Job implements ExpressionSource {
     });
   }
 
+  /**
+   * Infers the jobs this job depends on: the explicitly declared `needs` plus
+   * every job referenced by an expression anywhere in the job's configuration
+   * or steps. The result is deduplicated and ordered deterministically.
+   */
   inferNeeds(stepOwners?: Map<Step<string>, Job[]>): Job[] {
     const config = this.#config;
     const jobSources = new Set<Job>();
@@ -640,37 +687,25 @@ export class Job implements ExpressionSource {
       for (const j of config.needs) jobSources.add(j);
     }
 
-    // collect from job-level if
+    // fields common to both job kinds
+    collectJobSources(config.name, jobSources);
     collectJobSources(config.if, jobSources);
 
     if ("uses" in config) {
-      // reusable workflow job — collect from with/secrets
-      if (config.with) {
-        for (const value of Object.values(config.with)) {
-          collectJobSources(value, jobSources);
-        }
-      }
-      if (config.secrets && config.secrets !== "inherit") {
-        for (const value of Object.values(config.secrets)) {
-          collectJobSources(value, jobSources);
-        }
-      }
+      // Reusable workflow job — collect from with/secrets. `secrets: "inherit"`
+      // is a plain string, so it contributes nothing.
+      collectJobSources(config.with, jobSources);
+      collectJobSources(config.secrets, jobSources);
     } else {
-      // steps job — collect from env, runsOn, environment, strategy, steps
-      if (config.env) {
-        for (const value of Object.values(config.env)) {
-          collectJobSources(value, jobSources);
-        }
-      }
-
+      // steps job — every field that can embed an expression, then the steps
+      collectJobSources(config.env, jobSources);
       collectJobSources(config.runsOn, jobSources);
       collectJobSources(config.environment, jobSources);
+      collectJobSources(config.container, jobSources);
+      collectJobSources(config.services, jobSources);
+      collectJobSources(config.strategy, jobSources);
+      collectJobSources(this.#outputDefs, jobSources);
 
-      if (config.strategy?.failFast != null) {
-        collectJobSources(config.strategy.failFast, jobSources);
-      }
-
-      // collect from all steps in the graph
       const { graph } = this.#buildGraph();
       collectJobSourcesFromGraph(graph, jobSources, stepOwners);
     }
@@ -679,6 +714,7 @@ export class Job implements ExpressionSource {
     return [...jobSources].filter((j) => j !== this);
   }
 
+  /** Serializes the job to its GitHub Actions YAML object representation. */
   toYaml(stepOwners?: Map<Step<string>, Job[]>): Record<string, unknown> {
     const config = this.#config;
     const result: Record<string, unknown> = {};
@@ -769,26 +805,14 @@ export class Job implements ExpressionSource {
     }
 
     if (config.defaults != null) {
-      const d: Record<string, unknown> = {};
-      if (config.defaults.run) {
-        const run: Record<string, unknown> = {};
-        if (config.defaults.run.shell != null) {
-          run.shell = config.defaults.run.shell;
-        }
-        if (config.defaults.run.workingDirectory != null) {
-          run["working-directory"] = config.defaults.run.workingDirectory;
-        }
-        d.run = run;
-      }
-      result.defaults = d;
+      const defaults = serializeDefaults(config.defaults);
+      if (defaults != null) result.defaults = defaults;
     }
 
     if (config.strategy != null) {
       const s: Record<string, unknown> = {};
       if (config.strategy.matrix != null) {
-        s.matrix = config.strategy.matrix instanceof Matrix
-          ? config.strategy.matrix.toYaml()
-          : config.strategy.matrix;
+        s.matrix = serializeMatrix(config.strategy.matrix);
       }
       if (config.strategy.failFast != null) {
         const ff = config.strategy.failFast;
@@ -799,15 +823,14 @@ export class Job implements ExpressionSource {
       if (config.strategy.maxParallel != null) {
         s["max-parallel"] = config.strategy.maxParallel;
       }
-      result.strategy = s;
+      // an empty strategy is meaningless — omit it rather than emit `{}`
+      if (Object.keys(s).length > 0) {
+        result.strategy = s;
+      }
     }
 
     if (config.env != null) {
-      const env: Record<string, string | number | boolean> = {};
-      for (const [key, value] of Object.entries(config.env)) {
-        env[key] = value instanceof ExpressionValue ? value.toString() : value;
-      }
-      result.env = env;
+      result.env = serializeConfigValues(config.env);
     }
 
     if (config.services != null) {
@@ -818,16 +841,8 @@ export class Job implements ExpressionSource {
       result.services = services;
     }
 
-    // outputs
-    if (Object.keys(this.#outputDefs).length > 0) {
-      const outputs: Record<string, string> = {};
-      for (const [name, exprValue] of Object.entries(this.#outputDefs)) {
-        outputs[name] = exprValue.toString();
-      }
-      result.outputs = outputs;
-    }
-
-    // steps
+    // steps — resolved before outputs so outputs can be validated against the
+    // steps that actually survive condition filtering
     const { graph } = this.#buildGraph();
     const units = this.#resolveUnits();
     const effectiveConditions = computeEffectiveConditions(
@@ -840,10 +855,12 @@ export class Job implements ExpressionSource {
     };
     const serialize = (s: Step<string>) => s.toYaml(effectiveConditions.get(s));
 
+    const emittedSteps = new Set<Step<string>>();
     const steps: unknown[] = [];
     for (const unit of units) {
       const visible = unit.steps.filter(isVisible);
       if (visible.length === 0) continue;
+      for (const s of visible) emittedSteps.add(s);
       // a parallel block only makes sense with more than one step; collapse a
       // single remaining step back to a normal sequential step
       if (unit.parallel && visible.length > 1) {
@@ -852,9 +869,41 @@ export class Job implements ExpressionSource {
         for (const s of visible) steps.push(serialize(s));
       }
     }
+
+    if (Object.keys(this.#outputDefs).length > 0) {
+      const outputs: Record<string, string> = {};
+      for (const [name, exprValue] of Object.entries(this.#outputDefs)) {
+        this.#assertOutputStepsAreEmitted(name, exprValue, emittedSteps);
+        outputs[name] = exprValue.toString();
+      }
+      result.outputs = outputs;
+    }
+
     result.steps = steps;
 
     return result;
+  }
+
+  /**
+   * Rejects a job output whose expression references a step this job does not
+   * emit — either a step belonging to another job, or one dropped because its
+   * condition is always false. GitHub resolves `steps.<id>.outputs.*` within
+   * the job only, so such an output would silently be empty at runtime.
+   */
+  #assertOutputStepsAreEmitted(
+    name: string,
+    value: ExpressionValue,
+    emittedSteps: Set<Step<string>>,
+  ): void {
+    for (const source of value.allSources) {
+      if (source instanceof Step && !emittedSteps.has(source)) {
+        throw new Error(
+          `Job "${this.#id}" output "${name}" references step "${
+            stepLabel(source)
+          }", which is not one of the job's steps.`,
+        );
+      }
+    }
   }
 }
 
@@ -1382,6 +1431,10 @@ function collectJobSources(value: unknown, out: Set<Job>): void {
         out.add(source);
       }
     }
+  } else if (value instanceof Matrix) {
+    // a Matrix keeps its definition private, so the expressions that may
+    // reference other jobs are only reachable through matrixDefOf
+    collectJobSources(matrixDefOf(value), out);
   } else if (typeof value === "object" && value !== null) {
     for (const v of Object.values(value)) {
       collectJobSources(v, out);
@@ -1402,7 +1455,7 @@ function collectJobSourcesFromGraph(
     if (step.config.with) collectJobSources(step.config.with, out);
     if (step.config.env) collectJobSources(step.config.env, out);
     if (stepOwners) {
-      for (const dep of step._crossJobDeps) {
+      for (const dep of crossJobDepsOf(step)) {
         const owners = stepOwners.get(dep);
         if (owners) {
           for (const j of owners) out.add(j);
@@ -1472,8 +1525,39 @@ function serializeEnvironment(
   return result;
 }
 
-// --- helpers ---
+/**
+ * Serializes a `strategy.matrix`. A plain object matrix is run through `Matrix`
+ * as well so that any `ExpressionValue`/`Condition` it contains becomes a
+ * `${{ }}` string instead of being handed to the YAML serializer as-is.
+ */
+function serializeMatrix(matrix: unknown): unknown {
+  if (matrix instanceof Matrix) return matrix.toYaml();
+  return new Matrix(matrix as Record<string, unknown>, []).toYaml();
+}
 
+/**
+ * Serializes a `defaults` block, or returns undefined when it carries no
+ * settings at all.
+ */
+export function serializeDefaults(
+  defaults: JobDefaults,
+): Record<string, unknown> | undefined {
+  if (defaults.run == null) return undefined;
+  const run: Record<string, unknown> = {};
+  if (defaults.run.shell != null) {
+    run.shell = defaults.run.shell;
+  }
+  if (defaults.run.workingDirectory != null) {
+    run["working-directory"] = defaults.run.workingDirectory;
+  }
+  // an empty `defaults` block is meaningless — omit it rather than emit `{}`
+  if (Object.keys(run).length === 0) return undefined;
+  return { run };
+}
+
+// --- job ids ---
+
+/** Converts a human readable name into a kebab-cased job id. */
 export function toKebabCase(input: string): string {
   return input
     .toLowerCase()
@@ -1481,18 +1565,50 @@ export function toKebabCase(input: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/**
+ * Resolves a job definition's id, deriving it from a string `name` when no
+ * explicit `id` was given.
+ */
 export function resolveJobId(def: JobDef): string {
   if (def.id != null) return def.id;
   if (def.name != null && typeof def.name === "string") {
-    return toKebabCase(def.name);
+    const derived = toKebabCase(def.name);
+    if (!isValidJobId(derived)) {
+      throw new Error(
+        `Job name ${JSON.stringify(def.name)} derives the invalid job id ${
+          JSON.stringify(derived)
+        }. ${JOB_ID_REQUIREMENT} Provide an explicit \`id\` instead.`,
+      );
+    }
+    return derived;
   }
   throw new Error(
     "Job definition must have either an `id` or a string `name` to derive an ID from",
   );
 }
 
+const JOB_ID_REQUIREMENT =
+  "A job id must start with a letter or `_` and contain only letters, " +
+  "numbers, `-`, and `_`.";
+
+// mirrors GitHub's documented job_id rule
+const VALID_JOB_ID = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+function isValidJobId(id: string): boolean {
+  return VALID_JOB_ID.test(id);
+}
+
+function assertValidJobId(id: string): void {
+  if (!isValidJobId(id)) {
+    throw new Error(
+      `Invalid job id ${JSON.stringify(id)}. ${JOB_ID_REQUIREMENT}`,
+    );
+  }
+}
+
 // --- job() free function ---
 
+/** Creates a job with the given id. */
 export function job(id: string, config: JobDef): Job {
   if ("uses" in config) {
     const { id: _id, ...reusableConfig } = config;
