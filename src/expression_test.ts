@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 import {
   ComparisonCondition,
   concat,
@@ -8,6 +8,7 @@ import {
   expr,
   type ExpressionSource,
   ExpressionValue,
+  formatLiteral,
   fromJSON,
   FunctionCallCondition,
   hashFiles,
@@ -16,6 +17,7 @@ import {
   join,
   literal,
   RawCondition,
+  sourcesFrom,
   toJSON,
 } from "./expression.ts";
 
@@ -365,8 +367,8 @@ Deno.test("Condition duplicate sources are deduplicated", () => {
 
 // --- RawCondition parenthesization ---
 
-function raw(expr: string) {
-  return new RawCondition(expr, new Set());
+function raw(expr: string, sources: ExpressionSource[] = []) {
+  return new RawCondition(expr, new Set(sources));
 }
 
 Deno.test("raw condition without operators is not parenthesized in and", () => {
@@ -1024,4 +1026,762 @@ Deno.test("join tracks sources", () => {
   const result = join(v, ",");
   assertEquals(result.allSources.size, 1);
   assertEquals(result.allSources.has(s), true);
+});
+
+Deno.test("join with an empty separator", () => {
+  assertEquals(join(expr("x"), "").expression, "join(x, '')");
+});
+
+// --- single quote escaping ---
+
+Deno.test("formatLiteral quotes strings and doubles inner quotes", () => {
+  assertEquals(formatLiteral("linux"), "'linux'");
+  assertEquals(formatLiteral("it's"), "'it''s'");
+  assertEquals(formatLiteral("''"), "''''''");
+  assertEquals(formatLiteral(42), "42");
+  assertEquals(formatLiteral(true), "true");
+});
+
+Deno.test("equals escapes single quotes in the compared value", () => {
+  assertEquals(
+    expr("matrix.name").equals("it's").toExpression(),
+    "matrix.name == 'it''s'",
+  );
+});
+
+Deno.test("notEquals escapes single quotes in the compared value", () => {
+  assertEquals(
+    expr("matrix.name").notEquals("it's").toExpression(),
+    "matrix.name != 'it''s'",
+  );
+});
+
+Deno.test("startsWith/endsWith/contains escape single quotes", () => {
+  assertEquals(
+    expr("x").startsWith("a'b").toExpression(),
+    "startsWith(x, 'a''b')",
+  );
+  assertEquals(expr("x").endsWith("a'b").toExpression(), "endsWith(x, 'a''b')");
+  assertEquals(expr("x").contains("a'b").toExpression(), "contains(x, 'a''b')");
+});
+
+Deno.test("literal escapes single quotes in its expression", () => {
+  const v = literal("it's");
+  assertEquals(v.expression, "'it''s'");
+  // the plain form is unescaped since it is not inside an expression
+  assertEquals(v.toString(), "it's");
+});
+
+Deno.test("literal with quotes still simplifies comparisons", () => {
+  assertEquals(literal("it's").equals("it's").toExpression(), "true");
+  assertEquals(literal("it's").notEquals("it's").toExpression(), "false");
+  assertEquals(literal("it's").equals("its").toExpression(), "false");
+});
+
+Deno.test("join escapes single quotes in the separator", () => {
+  assertEquals(join(expr("x"), "', '").expression, "join(x, ''', ''')");
+});
+
+Deno.test("fromJSON escapes single quotes in a string argument", () => {
+  assertEquals(fromJSON("{'a': 1}").expression, "fromJSON('{''a'': 1}')");
+});
+
+Deno.test("hashFiles escapes single quotes in a pattern", () => {
+  assertEquals(hashFiles("a'b/*.txt").expression, "hashFiles('a''b/*.txt')");
+});
+
+Deno.test("ternary values escape single quotes", () => {
+  const v = cmp("a", "1").then("it's").else("its");
+  assertEquals(v.expression, "a == '1' && 'it''s' || 'its'");
+});
+
+// --- literal detection ---
+
+Deno.test("comparison of literals with different types is not simplified", () => {
+  // GitHub coerces mismatched types at runtime, so this can't be decided here
+  assertEquals(literal("42").equals(42).toExpression(), "'42' == 42");
+  assertEquals(literal(42).equals("42").toExpression(), "42 == '42'");
+  assertEquals(
+    literal("true").notEquals(true).toExpression(),
+    "'true' != true",
+  );
+});
+
+Deno.test("string literals compare ignoring case, like GitHub does", () => {
+  // "GitHub ignores case when comparing strings"
+  assertEquals(literal("Linux").equals("linux").toExpression(), "true");
+  assertEquals(literal("Linux").notEquals("linux").toExpression(), "false");
+  assertEquals(literal("macOS").equals("MACOS").toExpression(), "true");
+  assertEquals(literal("X64").equals("x64").toExpression(), "true");
+  assertEquals(literal("Linux").equals("windows").toExpression(), "false");
+  assertEquals(literal("Linux").notEquals("windows").toExpression(), "true");
+});
+
+Deno.test("defineExprObj comparisons ignore case", () => {
+  const m = defineExprObj({ os: "Linux" });
+  assertEquals(m.os.equals("linux").toExpression(), "true");
+  assertEquals(m.os.notEquals("linux").toExpression(), "false");
+});
+
+Deno.test("case-insensitive comparison also applies to escaped quotes", () => {
+  assertEquals(literal("It's").equals("IT'S").toExpression(), "true");
+});
+
+Deno.test("strings differing only by non-ASCII case are left to GitHub", () => {
+  // JavaScript and GitHub don't necessarily fold non-ASCII the same way
+  assertEquals(literal("Ä").equals("ä").toExpression(), "'Ä' == 'ä'");
+});
+
+Deno.test("NaN and Infinity are not treated as number literals", () => {
+  // neither is valid GitHub literal syntax, and NaN never equals itself
+  assertEquals(
+    new ExpressionValue("NaN").equals(NaN).toExpression(),
+    "NaN == NaN",
+  );
+  assertEquals(
+    new ExpressionValue("Infinity").equals(1).toExpression(),
+    "Infinity == 1",
+  );
+});
+
+Deno.test("boolean literal expression simplifies against a boolean", () => {
+  assertEquals(new ExpressionValue("true").equals(true).toExpression(), "true");
+  assertEquals(
+    new ExpressionValue("true").equals(false).toExpression(),
+    "false",
+  );
+});
+
+Deno.test("expression that only starts and ends with a quote is not a literal", () => {
+  const v = new ExpressionValue("'a' == 'b'");
+  assertEquals(v.equals("c").toExpression(), "'a' == 'b' == 'c'");
+});
+
+Deno.test("empty string literal is detected as a literal", () => {
+  assertEquals(literal("").equals("").toExpression(), "true");
+  assertEquals(literal("").equals("x").toExpression(), "false");
+});
+
+Deno.test("a lone quote is not treated as a literal", () => {
+  const v = new ExpressionValue("'");
+  assertEquals(v.equals("x").toExpression(), "' == 'x'");
+});
+
+// --- not: precedence and double negation ---
+
+Deno.test("not parenthesizes raw conditions containing logical operators", () => {
+  assertEquals(raw("a && b").not().toExpression(), "!(a && b)");
+  assertEquals(raw("a || b").not().toExpression(), "!(a || b)");
+});
+
+Deno.test("not parenthesizes raw conditions containing comparisons", () => {
+  assertEquals(raw("a == 'b'").not().toExpression(), "!(a == 'b')");
+  assertEquals(raw("a > 1").not().toExpression(), "!(a > 1)");
+});
+
+Deno.test("not does not parenthesize simple raw conditions", () => {
+  assertEquals(raw("matrix.skip").not().toExpression(), "!matrix.skip");
+});
+
+Deno.test("double not on a function call cancels out", () => {
+  const c = fn("always", []);
+  assertEquals(c.not().not().toExpression(), "always()");
+  assertEquals(c.not().not().not().toExpression(), "!always()");
+});
+
+Deno.test("double not on a raw condition cancels out", () => {
+  assertEquals(raw("matrix.skip").not().not().toExpression(), "matrix.skip");
+});
+
+Deno.test("double not preserves sources", () => {
+  const s = { id: "s1" };
+  const c = fn("always", [], [s]);
+  assertEquals(c.not().not().sources.has(s), true);
+});
+
+Deno.test("ExpressionValue.not() parenthesizes its expression", () => {
+  assertEquals(expr("matrix.skip").not().toExpression(), "!(matrix.skip)");
+});
+
+// --- comparison precedence ---
+
+Deno.test("comparison parenthesizes a left side with logical operators", () => {
+  const ternary = cmp("a", "1").then("x").else("y");
+  assertEquals(
+    ternary.equals("x").toExpression(),
+    "(a == '1' && 'x' || 'y') == 'x'",
+  );
+  assertEquals(
+    ternary.notEquals("x").toExpression(),
+    "(a == '1' && 'x' || 'y') != 'x'",
+  );
+});
+
+Deno.test("comparison leaves a simple left side alone", () => {
+  assertEquals(
+    concat("a-", expr("x")).equals("a-b").toExpression(),
+    "format('a-{0}', x) == 'a-b'",
+  );
+});
+
+// --- ternary: then / elseIf / else ---
+
+Deno.test("ternary then/else renders as cond && value || fallback", () => {
+  const v = expr("matrix.os").equals("linux").then("ubuntu-latest").else(
+    "macos-latest",
+  );
+  assertEquals(
+    v.expression,
+    "matrix.os == 'linux' && 'ubuntu-latest' || 'macos-latest'",
+  );
+  assertEquals(
+    v.toString(),
+    "${{ matrix.os == 'linux' && 'ubuntu-latest' || 'macos-latest' }}",
+  );
+});
+
+Deno.test("ternary with truthy number and boolean values", () => {
+  // only truthy `then` values work; the falsy direction throws, see below
+  assertEquals(cmp("a", "1").then(1).else(0).expression, "a == '1' && 1 || 0");
+  assertEquals(
+    cmp("a", "1").then(true).else(false).expression,
+    "a == '1' && true || false",
+  );
+});
+
+Deno.test("ternary rejects falsy then values", () => {
+  // `cond && '' || 'x'` would always produce 'x'
+  for (const value of [false, 0, ""] as const) {
+    assertThrows(
+      () => cmp("a", "1").then(value),
+      Error,
+      "A ternary value must not be falsy",
+    );
+  }
+});
+
+Deno.test("ternary rejects falsy literal expression values", () => {
+  assertThrows(() => cmp("a", "1").then(literal("")), Error, "must not be");
+  assertThrows(() => cmp("a", "1").then(literal(0)), Error, "must not be");
+  assertThrows(() => cmp("a", "1").then(expr("false")), Error, "must not be");
+});
+
+Deno.test("ternary rejects falsy values in elseIf branches", () => {
+  assertThrows(
+    () => cmp("a", "1").then("x").elseIf(cmp("b", "2")).then(""),
+    Error,
+    "A ternary value must not be falsy",
+  );
+});
+
+Deno.test("ternary allows falsy else values and dynamic then values", () => {
+  // the fallback is the last operand, so a falsy value there is fine
+  assertEquals(
+    cmp("a", "1").then("x").else("").expression,
+    "a == '1' && 'x' || ''",
+  );
+  assertEquals(
+    cmp("a", "1").then(true).else(false).expression.endsWith("false"),
+    true,
+  );
+  // a dynamic value can't be checked, so it is allowed through
+  assertEquals(
+    cmp("a", "1").then(expr("matrix.value")).else("x").expression,
+    "a == '1' && matrix.value || 'x'",
+  );
+});
+
+Deno.test("ternary with an expression value", () => {
+  const v = cmp("a", "1").then(expr("matrix.runner")).else("ubuntu-latest");
+  assertEquals(v.expression, "a == '1' && matrix.runner || 'ubuntu-latest'");
+});
+
+Deno.test("ternary elseIf adds a branch", () => {
+  const v = cmp("a", "1")
+    .then("x")
+    .elseIf(cmp("b", "2"))
+    .then("y")
+    .else("z");
+  assertEquals(v.expression, "a == '1' && 'x' || b == '2' && 'y' || 'z'");
+});
+
+Deno.test("ternary elseIf chains multiple branches", () => {
+  const v = cmp("a", "1")
+    .then("x")
+    .elseIf(cmp("b", "2"))
+    .then("y")
+    .elseIf(cmp("c", "3"))
+    .then("w")
+    .else("z");
+  assertEquals(
+    v.expression,
+    "a == '1' && 'x' || b == '2' && 'y' || c == '3' && 'w' || 'z'",
+  );
+});
+
+Deno.test("ternary parenthesizes an or condition", () => {
+  const v = cmp("a", "1").or(cmp("b", "2")).then("x").else("y");
+  assertEquals(v.expression, "(a == '1' || b == '2') && 'x' || 'y'");
+});
+
+Deno.test("ternary parenthesizes a raw or condition", () => {
+  const v = raw("a || b").then("x").else("y");
+  assertEquals(v.expression, "(a || b) && 'x' || 'y'");
+});
+
+Deno.test("ternary does not parenthesize an and condition", () => {
+  const v = cmp("a", "1").and(cmp("b", "2")).then("x").else("y");
+  assertEquals(v.expression, "a == '1' && b == '2' && 'x' || 'y'");
+});
+
+Deno.test("ternary parenthesizes a nested ternary value", () => {
+  const inner = cmp("a", "1").then("x").else("y");
+  const outer = cmp("b", "2").then(inner).else("z");
+  assertEquals(outer.expression, "b == '2' && (a == '1' && 'x' || 'y') || 'z'");
+});
+
+Deno.test("ternary parenthesizes a nested ternary in the else branch", () => {
+  const inner = cmp("a", "1").then("x").else("y");
+  const outer = cmp("b", "2").then("q").else(inner);
+  assertEquals(outer.expression, "b == '2' && 'q' || (a == '1' && 'x' || 'y')");
+});
+
+Deno.test("ternary does not parenthesize a concat value", () => {
+  const v = cmp("a", "1").then(concat("build-", expr("matrix.os"))).else(
+    "none",
+  );
+  assertEquals(
+    v.expression,
+    "a == '1' && format('build-{0}', matrix.os) || 'none'",
+  );
+});
+
+Deno.test("ternary collects sources from conditions and values", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const s3 = { id: "s3" };
+  const v = cmp("a", "1", [s1])
+    .then(new ExpressionValue("steps.b.outputs.x", s2))
+    .else(new ExpressionValue("steps.c.outputs.y", s3));
+  assertEquals(v.allSources.size, 3);
+  assertEquals(v.allSources.has(s1), true);
+  assertEquals(v.allSources.has(s2), true);
+  assertEquals(v.allSources.has(s3), true);
+});
+
+Deno.test("ternary collects sources from elseIf branches", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const v = cmp("a", "1", [s1])
+    .then("x")
+    .elseIf(cmp("b", "2", [s2]))
+    .then("y")
+    .else("z");
+  assertEquals(v.allSources.size, 2);
+});
+
+Deno.test("elseIf does not leak sources into the builder it came from", () => {
+  const s2 = { id: "s2" };
+  const builder = cmp("a", "1").then("x");
+  builder.elseIf(cmp("b", "2", [s2]));
+  assertEquals(builder.else("z").allSources.size, 0);
+});
+
+Deno.test("ternary can be used as a concat part", () => {
+  const v = concat("os-", cmp("a", "1").then("linux").else("macos"));
+  assertEquals(
+    v.expression,
+    "format('os-{0}', a == '1' && 'linux' || 'macos')",
+  );
+});
+
+// --- conditions helpers ---
+
+Deno.test("conditions.status functions", () => {
+  assertEquals(conditions.status.always().toExpression(), "always()");
+  assertEquals(conditions.status.success().toExpression(), "success()");
+  assertEquals(conditions.status.failure().toExpression(), "failure()");
+  assertEquals(conditions.status.cancelled().toExpression(), "cancelled()");
+});
+
+Deno.test("conditions.status.always() is not treated as always-true", () => {
+  // it is a runtime function call, so it must survive simplification
+  assertEquals(conditions.status.always().isAlwaysTrue(), false);
+  assertEquals(
+    conditions.status.always().and(cmp("a", "1")).toExpression(),
+    "always() && a == '1'",
+  );
+});
+
+Deno.test("conditions.isTag without a tag matches any tag", () => {
+  assertEquals(
+    conditions.isTag().toExpression(),
+    "startsWith(github.ref, 'refs/tags/')",
+  );
+});
+
+Deno.test("conditions.isTag with a tag matches that tag", () => {
+  assertEquals(
+    conditions.isTag("v1.0.0").toExpression(),
+    "github.ref == 'refs/tags/v1.0.0'",
+  );
+});
+
+Deno.test("conditions.isBranch", () => {
+  assertEquals(
+    conditions.isBranch("main").toExpression(),
+    "github.ref == 'refs/heads/main'",
+  );
+});
+
+Deno.test("conditions.isEvent and isPr", () => {
+  assertEquals(
+    conditions.isEvent("workflow_dispatch").toExpression(),
+    "github.event_name == 'workflow_dispatch'",
+  );
+  assertEquals(
+    conditions.isPr().toExpression(),
+    "github.event_name == 'pull_request'",
+  );
+});
+
+Deno.test("conditions.isRepository", () => {
+  assertEquals(
+    conditions.isRepository("denoland/deno").toExpression(),
+    "github.repository == 'denoland/deno'",
+  );
+});
+
+Deno.test("conditions.isDraftPr", () => {
+  assertEquals(
+    conditions.isDraftPr().toExpression(),
+    "github.event.pull_request.draft == true",
+  );
+});
+
+Deno.test("conditions.hasPrLabel", () => {
+  assertEquals(
+    conditions.hasPrLabel("ci-full").toExpression(),
+    "contains(github.event.pull_request.labels.*.name, 'ci-full')",
+  );
+});
+
+Deno.test("conditions.isRunnerOs and isRunnerArch", () => {
+  assertEquals(
+    conditions.isRunnerOs("Linux").toExpression(),
+    "runner.os == 'Linux'",
+  );
+  assertEquals(
+    conditions.isRunnerArch("ARM64").toExpression(),
+    "runner.arch == 'ARM64'",
+  );
+});
+
+Deno.test("conditions helpers carry no sources", () => {
+  assertEquals(conditions.isTag().sources.size, 0);
+  assertEquals(conditions.isPr().sources.size, 0);
+});
+
+Deno.test("conditions compose into a release condition", () => {
+  const c = conditions.isTag()
+    .and(conditions.isRepository("denoland/deno"))
+    .and(conditions.isPr().not());
+  assertEquals(
+    c.toExpression(),
+    "startsWith(github.ref, 'refs/tags/') && " +
+      "github.repository == 'denoland/deno' && " +
+      "github.event_name != 'pull_request'",
+  );
+});
+
+// --- isAlwaysTrue / isAlwaysFalse helpers ---
+
+Deno.test("isAlwaysTrue/isAlwaysFalse with strings", () => {
+  assertEquals(isAlwaysTrue("true"), true);
+  assertEquals(isAlwaysTrue("false"), false);
+  assertEquals(isAlwaysTrue("github.ref == 'main'"), false);
+  assertEquals(isAlwaysFalse("false"), true);
+  assertEquals(isAlwaysFalse("true"), false);
+});
+
+Deno.test("isAlwaysTrue/isAlwaysFalse with an ExpressionValue", () => {
+  assertEquals(isAlwaysTrue(expr("github.ref")), false);
+  assertEquals(isAlwaysFalse(expr("github.ref")), false);
+});
+
+Deno.test("isAlwaysTrue with a negated always-false condition", () => {
+  assertEquals(isAlwaysTrue(conditions.isFalse().not()), true);
+});
+
+Deno.test("isPossiblyTrue reflects always-false", () => {
+  assertEquals(conditions.isFalse().isPossiblyTrue(), false);
+  assertEquals(conditions.isTrue().isPossiblyTrue(), true);
+  assertEquals(cmp("a", "1").isPossiblyTrue(), true);
+});
+
+// --- sourcesFrom ---
+
+Deno.test("sourcesFrom collects from values, conditions, and sourceables", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const s3 = { id: "s3" };
+  const set = sourcesFrom(
+    new ExpressionValue("a", s1),
+    cmp("b", "2", [s2]),
+    { source: s3 },
+  );
+  assertEquals(set.size, 3);
+  assertEquals(set.has(s1), true);
+  assertEquals(set.has(s2), true);
+  assertEquals(set.has(s3), true);
+});
+
+Deno.test("sourcesFrom deduplicates and tolerates missing sources", () => {
+  const s1 = { id: "s1" };
+  const set = sourcesFrom(
+    new ExpressionValue("a", s1),
+    new ExpressionValue("b", s1),
+    { source: undefined },
+  );
+  assertEquals(set.size, 1);
+});
+
+Deno.test("ExpressionValue built from a source set has no single source", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const v = new ExpressionValue("a", new Set([s1, s2]));
+  assertEquals(v.source, undefined);
+  assertEquals(v.allSources.size, 2);
+  assertEquals(v.equals("x").sources.size, 2);
+});
+
+// --- flattening ---
+
+Deno.test("flattenAnd flattens nested ands only", () => {
+  const c = cmp("a", "1").and(cmp("b", "2")).and(cmp("c", "3"));
+  assertEquals(c.flattenAnd().map((t) => t.toExpression()), [
+    "a == '1'",
+    "b == '2'",
+    "c == '3'",
+  ]);
+  assertEquals(c.flattenOr().length, 1);
+});
+
+Deno.test("flattenOr flattens nested ors only", () => {
+  const c = cmp("a", "1").or(cmp("b", "2")).or(cmp("c", "3"));
+  assertEquals(c.flattenOr().map((t) => t.toExpression()), [
+    "a == '1'",
+    "b == '2'",
+    "c == '3'",
+  ]);
+  assertEquals(c.flattenAnd().length, 1);
+});
+
+Deno.test("getAndTerms returns and terms but not or terms", () => {
+  assertEquals(cmp("a", "1").and(cmp("b", "2")).getAndTerms(), [
+    "a == '1'",
+    "b == '2'",
+  ]);
+  assertEquals(cmp("a", "1").or(cmp("b", "2")).getAndTerms(), [
+    "a == '1' || b == '2'",
+  ]);
+});
+
+// --- and/or source propagation ---
+
+Deno.test("and(false) keeps the sources of both sides", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const c = cmp("a", "1", [s1]).and(new RawCondition("false", new Set([s2])));
+  assertEquals(c.toExpression(), "false");
+  assertEquals(c.sources.size, 2);
+});
+
+Deno.test("or(true) keeps the sources of both sides", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const c = cmp("a", "1", [s1]).or(new RawCondition("true", new Set([s2])));
+  assertEquals(c.toExpression(), "true");
+  assertEquals(c.sources.size, 2);
+});
+
+Deno.test("and/or with boolean arguments contribute no sources", () => {
+  const s1 = { id: "s1" };
+  assertEquals(cmp("a", "1", [s1]).and(true).sources.size, 1);
+  assertEquals(cmp("a", "1", [s1]).and(false).sources.size, 1);
+  assertEquals(cmp("a", "1", [s1]).or(true).sources.size, 1);
+  assertEquals(cmp("a", "1", [s1]).or(false).sources.size, 1);
+});
+
+Deno.test("and keeps sources when every right term is already present", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const s3 = { id: "s3" };
+  const c = raw("a", [s1]).and(raw("b", [s2])).and(raw("a", [s3]));
+  assertEquals(c.toExpression(), "a && b");
+  assertEquals(c.sources.size, 3);
+  assertEquals(c.sources.has(s3), true);
+});
+
+Deno.test("or keeps sources when every right term is already present", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const c = cmp("a", "1", [s1]).or(cmp("a", "1", [s2]));
+  assertEquals(c.toExpression(), "a == '1'");
+  assertEquals(c.sources.size, 2);
+});
+
+Deno.test("withSources returns the same condition when nothing is added", () => {
+  const s1 = { id: "s1" };
+  const c = cmp("a", "1", [s1]);
+  assertEquals(c.withSources(new Set([s1])), c);
+  assertEquals(c.withSources(new Set()), c);
+});
+
+Deno.test("withSources preserves rendering for every condition kind", () => {
+  const s = { id: "s1" };
+  const extra = new Set([s]);
+  const kinds = [
+    cmp("a", "1"),
+    fn("always", []),
+    raw("matrix.skip"),
+    cmp("a", "1").not(),
+    cmp("a", "1").and(cmp("b", "2")),
+  ];
+  for (const c of kinds) {
+    const withExtra = c.withSources(extra);
+    assertEquals(withExtra.toExpression(), c.toExpression());
+    assertEquals(withExtra.sources.has(s), true);
+  }
+});
+
+Deno.test("deduplicated and keeps sources from the dropped term", () => {
+  const s1 = { id: "s1" };
+  const s2 = { id: "s2" };
+  const s3 = { id: "s3" };
+  // b is duplicated across both sides but carries a different source
+  const c = cmp("a", "1", [s1]).and(cmp("b", "2", [s2]))
+    .and(cmp("b", "2", [s3]).and(cmp("c", "3")));
+  assertEquals(c.toExpression(), "a == '1' && b == '2' && c == '3'");
+  assertEquals(c.sources.size, 3);
+});
+
+// --- concat edge cases ---
+
+Deno.test("concat ignores empty string parts", () => {
+  const v = concat("", expr("x"), "");
+  assertEquals(v.expression, "format('{0}', x)");
+  assertEquals(v.toString(), "${{ x }}");
+});
+
+Deno.test("concat of two expressions with nothing between them", () => {
+  const v = concat(expr("x"), expr("y"));
+  assertEquals(v.expression, "format('{0}{1}', x, y)");
+  assertEquals(v.toString(), "${{ x }}${{ y }}");
+});
+
+Deno.test("concat with a single number returns an inline value", () => {
+  assertEquals(concat(8080).toString(), "8080");
+  // concatenation produces a string, so the number renders as a quoted one
+  assertEquals(concat(8080).expression, "'8080'");
+});
+
+Deno.test("every concat path renders a lone number the same way", () => {
+  const expected = concat(8080).expression;
+  assertEquals(concat(8080, "").expression, expected);
+  assertEquals(concat("", 8080).expression, expected);
+  assertEquals(concat(concat(8080)).expression, expected);
+  assertEquals(concat(80, 80).expression, expected);
+});
+
+Deno.test("concat escapes quotes coming from a literal part", () => {
+  const v = concat(literal("it's-"), expr("matrix.os"));
+  assertEquals(v.expression, "format('it''s-{0}', matrix.os)");
+  assertEquals(v.toString(), "it's-${{ matrix.os }}");
+});
+
+Deno.test("concat repeats an expression that appears twice", () => {
+  const v = concat(expr("x"), "-", expr("x"));
+  assertEquals(v.expression, "format('{0}-{1}', x, x)");
+});
+
+Deno.test("concat of a concat result is stable", () => {
+  const inner = concat("a-", expr("x"));
+  assertEquals(concat(inner).expression, inner.expression);
+  assertEquals(concat(inner, "").expression, inner.expression);
+});
+
+Deno.test("concat preserves sources through nesting", () => {
+  const s1 = { id: "s1" };
+  const inner = concat("a-", new ExpressionValue("steps.a.outputs.x", s1));
+  const outer = concat(inner, "-b");
+  assertEquals(outer.allSources.size, 1);
+  assertEquals(outer.allSources.has(s1), true);
+});
+
+Deno.test("concat result can be negated", () => {
+  const v = concat("a-", expr("x"));
+  assertEquals(v.not().toExpression(), "!(format('a-{0}', x))");
+});
+
+// --- fromJSON / toJSON round trips ---
+
+Deno.test("toJSON of fromJSON round trips the expression text", () => {
+  const v = toJSON(fromJSON(expr("needs.setup.outputs.matrix")));
+  assertEquals(v.expression, "toJSON(fromJSON(needs.setup.outputs.matrix))");
+});
+
+Deno.test("fromJSON of toJSON round trips the expression text", () => {
+  const v = fromJSON(toJSON(expr("github.event")));
+  assertEquals(v.expression, "fromJSON(toJSON(github.event))");
+});
+
+Deno.test("fromJSON of a string carries no sources", () => {
+  assertEquals(fromJSON("[1, 2]").allSources.size, 0);
+});
+
+Deno.test("fromJSON result supports comparisons", () => {
+  const v = fromJSON(expr("needs.setup.outputs.flag"));
+  assertEquals(
+    v.equals(true).toExpression(),
+    "fromJSON(needs.setup.outputs.flag) == true",
+  );
+});
+
+// --- hashFiles edge cases ---
+
+Deno.test("hashFiles without patterns throws", () => {
+  assertThrows(
+    () => hashFiles(),
+    Error,
+    "hashFiles requires at least one pattern.",
+  );
+});
+
+Deno.test("hashFiles mixes string and expression patterns", () => {
+  const s = { id: "s1" };
+  const v = hashFiles("deno.lock", new ExpressionValue("matrix.extra", s));
+  assertEquals(v.expression, "hashFiles('deno.lock', matrix.extra)");
+  assertEquals(v.allSources.has(s), true);
+});
+
+// --- defineExprObj error path ---
+
+Deno.test("defineExprObj throws for unsupported value types", () => {
+  assertThrows(
+    () => defineExprObj({ bad: null }),
+    Error,
+    'Unsupported value type for key "bad"',
+  );
+  assertThrows(
+    () => defineExprObj({ bad: { nested: true } }),
+    Error,
+    'Unsupported value type for key "bad"',
+  );
+});
+
+Deno.test("defineExprObj keeps keys and is usable in conditions", () => {
+  const m = defineExprObj({ os: "linux", count: 2, skip: false });
+  assertEquals(Object.keys(m), ["os", "count", "skip"]);
+  assertEquals(m.skip.or(m.os.equals("linux")).toExpression(), "true");
 });

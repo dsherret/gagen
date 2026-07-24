@@ -1,4 +1,6 @@
 // types that step/job/workflow will reference back to
+
+/** Something an expression can depend on, such as a step or a job. */
 export type ExpressionSource = { readonly id: string };
 
 const EMPTY_SOURCES: ReadonlySet<ExpressionSource> = new Set();
@@ -40,24 +42,27 @@ export class ExpressionValue {
     return this.#expression;
   }
 
+  /** `this == value`, simplified when this value is a known literal */
   equals(value: string | number | boolean): Condition {
     const sources = sourcesFrom(this);
-    if (isLiteralExpression(this.#expression)) {
-      const isEqual = this.#expression === formatLiteral(value);
+    const isEqual = literalEquality(this.#expression, value);
+    if (isEqual != null) {
       return new RawCondition(isEqual ? "true" : "false", sources);
     }
     return new ComparisonCondition(this.#expression, "==", value, sources);
   }
 
+  /** `this != value`, simplified when this value is a known literal */
   notEquals(value: string | number | boolean): Condition {
     const sources = sourcesFrom(this);
-    if (isLiteralExpression(this.#expression)) {
-      const isEqual = this.#expression === formatLiteral(value);
+    const isEqual = literalEquality(this.#expression, value);
+    if (isEqual != null) {
       return new RawCondition(isEqual ? "false" : "true", sources);
     }
     return new ComparisonCondition(this.#expression, "!=", value, sources);
   }
 
+  /** `startsWith(this, prefix)` */
   startsWith(prefix: string): Condition {
     return new FunctionCallCondition(
       "startsWith",
@@ -66,6 +71,16 @@ export class ExpressionValue {
     );
   }
 
+  /** `endsWith(this, suffix)` */
+  endsWith(suffix: string): Condition {
+    return new FunctionCallCondition(
+      "endsWith",
+      [this.#expression, formatLiteral(suffix)],
+      sourcesFrom(this),
+    );
+  }
+
+  /** `contains(this, substring)` */
   contains(substring: string): Condition {
     return new FunctionCallCondition(
       "contains",
@@ -74,6 +89,7 @@ export class ExpressionValue {
     );
   }
 
+  /** `!(this)`, treating this value as a boolean */
   not(): Condition {
     return new RawCondition(`!(${this.#expression})`, sourcesFrom(this));
   }
@@ -83,14 +99,7 @@ export class ExpressionValue {
     return concat(this, ...parts);
   }
 
-  endsWith(suffix: string): Condition {
-    return new FunctionCallCondition(
-      "endsWith",
-      [this.#expression, formatLiteral(suffix)],
-      sourcesFrom(this),
-    );
-  }
-
+  /** `this > value` */
   greaterThan(value: number): Condition {
     return new ComparisonCondition(
       this.#expression,
@@ -100,6 +109,7 @@ export class ExpressionValue {
     );
   }
 
+  /** `this >= value` */
   greaterThanOrEqual(value: number): Condition {
     return new ComparisonCondition(
       this.#expression,
@@ -109,6 +119,7 @@ export class ExpressionValue {
     );
   }
 
+  /** `this < value` */
   lessThan(value: number): Condition {
     return new ComparisonCondition(
       this.#expression,
@@ -118,6 +129,7 @@ export class ExpressionValue {
     );
   }
 
+  /** `this <= value` */
   lessThanOrEqual(value: number): Condition {
     return new ComparisonCondition(
       this.#expression,
@@ -127,7 +139,7 @@ export class ExpressionValue {
     );
   }
 
-  /** serialize this value as JSON */
+  /** wrap this value in GitHub's `toJSON()` function */
   toJSON(): ExpressionValue {
     return toJSON(this);
   }
@@ -150,6 +162,7 @@ export abstract class Condition {
     this.sources = sources;
   }
 
+  /** `this && other`, simplifying always-true/always-false operands */
   and(other: Condition | boolean): Condition {
     const right = typeof other === "boolean"
       ? new RawCondition(String(other), EMPTY_SOURCES)
@@ -157,11 +170,12 @@ export abstract class Condition {
     if (this.isAlwaysTrue()) return right;
     if (right.isAlwaysTrue()) return this;
     if (this.isAlwaysFalse() || right.isAlwaysFalse()) {
-      return new RawCondition("false", unionSources(this, right));
+      return new RawCondition("false", sourcesFrom(this, right));
     }
     return deduplicatedLogical("&&", this, right);
   }
 
+  /** `this || other`, simplifying always-true/always-false operands */
   or(other: Condition | boolean): Condition {
     const right = typeof other === "boolean"
       ? new RawCondition(String(other), EMPTY_SOURCES)
@@ -169,11 +183,12 @@ export abstract class Condition {
     if (this.isAlwaysFalse()) return right;
     if (right.isAlwaysFalse()) return this;
     if (this.isAlwaysTrue() || right.isAlwaysTrue()) {
-      return new RawCondition("true", unionSources(this, right));
+      return new RawCondition("true", sourcesFrom(this, right));
     }
     return deduplicatedLogical("||", this, right);
   }
 
+  /** `!this`, simplifying where the negation can be expressed directly */
   not(): Condition {
     return new NotCondition(this, this.sources);
   }
@@ -185,8 +200,12 @@ export abstract class Condition {
    * const runner = os.equals("linux").then("ubuntu-latest").else("macos-latest");
    * // => matrix.os == 'linux' && 'ubuntu-latest' || 'macos-latest'
    * ```
+   *
+   * Throws when the value is a falsy literal, which the encoding can't
+   * represent.
    */
   then(value: TernaryValue): ThenBuilder {
+    assertTruthyTernaryValue(value);
     return new ThenBuilder([{ condition: this, value }], this.sources);
   }
 
@@ -222,6 +241,13 @@ export abstract class Condition {
   isPossiblyTrue(): boolean {
     return !this.isAlwaysFalse();
   }
+
+  /**
+   * Returns a condition that renders identically but additionally tracks the
+   * given sources. Simplification uses this when it drops a duplicate term
+   * whose sources the surviving term doesn't already have.
+   */
+  abstract withSources(sources: ReadonlySet<ExpressionSource>): Condition;
 
   /** render without `${{ }}` wrapping */
   abstract toExpression(): string;
@@ -273,8 +299,24 @@ export class ComparisonCondition extends Condition {
     );
   }
 
+  override withSources(
+    sources: ReadonlySet<ExpressionSource>,
+  ): ComparisonCondition {
+    return new ComparisonCondition(
+      this.#left,
+      this.#op,
+      this.#right,
+      mergeSources(this.sources, sources),
+    );
+  }
+
   toExpression(): string {
-    return `${this.#left} ${this.#op} ${formatLiteral(this.#right)}`;
+    // comparison binds tighter than && and ||, so a left side built from a
+    // ternary or another logical expression has to be parenthesized
+    const left = containsLogicalOperator(this.#left)
+      ? `(${this.#left})`
+      : this.#left;
+    return `${left} ${this.#op} ${formatLiteral(this.#right)}`;
   }
 }
 
@@ -291,6 +333,16 @@ export class FunctionCallCondition extends Condition {
     super(sources);
     this.#fn = fn;
     this.#args = args;
+  }
+
+  override withSources(
+    sources: ReadonlySet<ExpressionSource>,
+  ): FunctionCallCondition {
+    return new FunctionCallCondition(
+      this.#fn,
+      this.#args,
+      mergeSources(this.sources, sources),
+    );
   }
 
   toExpression(): string {
@@ -338,6 +390,17 @@ class LogicalCondition extends Condition {
     return [this];
   }
 
+  override withSources(
+    sources: ReadonlySet<ExpressionSource>,
+  ): LogicalCondition {
+    return new LogicalCondition(
+      this.op,
+      this.#left,
+      this.#right,
+      mergeSources(this.sources, sources),
+    );
+  }
+
   toExpression(): string {
     // parenthesize children that use a different operator to avoid ambiguity
     const left = this.#needsParens(this.#left)
@@ -354,8 +417,7 @@ class LogicalCondition extends Condition {
     if (child instanceof RawCondition) {
       // only parenthesize raw expressions that contain logical operators
       // which could cause precedence ambiguity
-      const expr = child.toExpression();
-      return expr.includes("&&") || expr.includes("||");
+      return containsLogicalOperator(child.toExpression());
     }
     return false;
   }
@@ -370,12 +432,22 @@ class NotCondition extends Condition {
     this.#inner = inner;
   }
 
+  override not(): Condition {
+    // `!!x` is the same as `x`
+    return this.#inner;
+  }
+
+  override withSources(sources: ReadonlySet<ExpressionSource>): NotCondition {
+    return new NotCondition(this.#inner, mergeSources(this.sources, sources));
+  }
+
   toExpression(): string {
     const inner = this.#inner.toExpression();
     // parenthesize compound inner expressions (comparisons need parens
     // because `!` has higher precedence than `==`/`!=` in GitHub Actions)
     const needsParens = this.#inner instanceof LogicalCondition ||
-      this.#inner instanceof ComparisonCondition;
+      this.#inner instanceof ComparisonCondition ||
+      (this.#inner instanceof RawCondition && containsBinaryOperator(inner));
     return needsParens ? `!(${inner})` : `!${inner}`;
   }
 }
@@ -405,6 +477,13 @@ export class RawCondition extends Condition {
       return new RawCondition("true", this.sources);
     }
     return super.not();
+  }
+
+  override withSources(sources: ReadonlySet<ExpressionSource>): RawCondition {
+    return new RawCondition(
+      this.#expression,
+      mergeSources(this.sources, sources),
+    );
   }
 
   toExpression(): string {
@@ -548,19 +627,16 @@ export function isAlwaysFalse(
   return false;
 }
 
+/**
+ * Renders a value as a GitHub Actions literal. Strings are single quoted with
+ * any embedded single quotes doubled, which is how they are escaped.
+ */
 export function formatLiteral(value: string | number | boolean): string {
-  if (typeof value === "string") return `'${value}'`;
+  if (typeof value === "string") return `'${escapeSingleQuotes(value)}'`;
   return String(value);
 }
 
-/** checks if an expression string is a literal (quoted string, number, or boolean) */
-function isLiteralExpression(expr: string): boolean {
-  if (expr.startsWith("'") && expr.endsWith("'")) return true;
-  if (expr === "true" || expr === "false") return true;
-  if (expr.length > 0 && String(Number(expr)) === expr) return true;
-  return false;
-}
-
+/** Collects the sources of any number of expression values or conditions. */
 export function sourcesFrom(
   ...sourceables: ({ source?: ExpressionSource } | Condition)[]
 ): ReadonlySet<ExpressionSource> {
@@ -577,14 +653,108 @@ export function sourcesFrom(
   return set;
 }
 
-function unionSources(
-  ...conditions: Condition[]
+function mergeSources(
+  existing: ReadonlySet<ExpressionSource>,
+  additional: ReadonlySet<ExpressionSource>,
 ): ReadonlySet<ExpressionSource> {
-  const set = new Set<ExpressionSource>();
-  for (const c of conditions) {
-    for (const s of c.sources) set.add(s);
+  for (const s of additional) {
+    if (!existing.has(s)) return new Set([...existing, ...additional]);
   }
-  return set;
+  return existing;
+}
+
+function escapeSingleQuotes(value: string): string {
+  return value.replaceAll("'", "''");
+}
+
+/**
+ * Statically compares a literal expression against a literal value. Returns
+ * `undefined` when the result can't be known at generation time, either
+ * because the expression isn't a literal or because the two sides have
+ * different types (GitHub coerces those at runtime).
+ */
+function literalEquality(
+  expression: string,
+  value: string | number | boolean,
+): boolean | undefined {
+  const valueType = typeof value;
+  if (literalTypeOf(expression) !== valueType) return undefined;
+  if (typeof value === "string") {
+    return literalStringEquality(unquoteStringLiteral(expression), value);
+  }
+  return expression === formatLiteral(value);
+}
+
+/**
+ * Compares two plain strings the way GitHub does, which ignores case. Returns
+ * `undefined` when the two differ only in the case of non-ASCII characters,
+ * because JavaScript doesn't necessarily fold those the same way GitHub does
+ * and letting GitHub decide at runtime is always correct.
+ */
+function literalStringEquality(a: string, b: string): boolean | undefined {
+  if (toAsciiLowerCase(a) === toAsciiLowerCase(b)) return true;
+  if (a.toLowerCase() === b.toLowerCase()) return undefined;
+  return false;
+}
+
+function toAsciiLowerCase(value: string): string {
+  let result = "";
+  for (const char of value) {
+    result += char >= "A" && char <= "Z" ? char.toLowerCase() : char;
+  }
+  return result;
+}
+
+/**
+ * Returns the type of an expression that is a literal (quoted string, number,
+ * or boolean), or `undefined` when it isn't one.
+ */
+function literalTypeOf(
+  expression: string,
+): "string" | "number" | "boolean" | undefined {
+  if (expression === "true" || expression === "false") return "boolean";
+  if (isQuotedStringLiteral(expression)) return "string";
+  // `NaN` and `Infinity` round trip through Number() but aren't literals that
+  // GitHub understands, so Number.isFinite excludes them here
+  const parsed = Number(expression);
+  if (expression.length > 0 && Number.isFinite(parsed)) {
+    if (String(parsed) === expression) return "number";
+  }
+  return undefined;
+}
+
+/** unescapes a quoted string literal back to the plain text it represents */
+function unquoteStringLiteral(expression: string): string {
+  return expression.slice(1, -1).replaceAll("''", "'");
+}
+
+/** checks that an expression is a single quoted string and nothing more */
+function isQuotedStringLiteral(expression: string): boolean {
+  if (expression.length < 2) return false;
+  if (!expression.startsWith("'") || !expression.endsWith("'")) return false;
+  // every quote between the outer quotes must be part of a doubled escape,
+  // otherwise the string ends early and more expression follows it
+  for (let i = 1; i < expression.length - 1; i++) {
+    if (expression[i] !== "'") continue;
+    if (expression[i + 1] !== "'") return false;
+    i++;
+  }
+  return true;
+}
+
+/** checks if a rendered expression contains `&&` or `||` */
+function containsLogicalOperator(expression: string): boolean {
+  return expression.includes("&&") || expression.includes("||");
+}
+
+/**
+ * Checks if a rendered expression contains any binary operator, all of which
+ * bind less tightly than a unary `!`.
+ */
+function containsBinaryOperator(expression: string): boolean {
+  if (containsLogicalOperator(expression)) return true;
+  return expression.includes("==") || expression.includes("!=") ||
+    expression.includes("<") || expression.includes(">");
 }
 
 /**
@@ -601,7 +771,9 @@ function deduplicatedLogical(
   const rightTerms = op === "&&" ? right.flattenAnd() : right.flattenOr();
   const seen = new Set(leftTerms.map((t) => t.toExpression()));
   const unique = rightTerms.filter((t) => !seen.has(t.toExpression()));
-  if (unique.length === 0) return left;
+  // every right term already appears on the left, so the left side is the
+  // whole result, but it still has to pick up the right side's sources
+  if (unique.length === 0) return left.withSources(right.sources);
   const allTerms = [...leftTerms, ...unique];
   // absorption: for &&, drop any OR compound whose child appears as a sibling
   // term (e.g. (A || B) && B → B). Symmetrically for ||.
@@ -612,7 +784,9 @@ function deduplicatedLogical(
     return !children.some((c) => termExprs.has(c.toExpression()));
   });
   const terms = absorbed.length > 0 ? absorbed : allTerms;
-  const sources = unionSources(...allTerms);
+  const sources = sourcesFrom(left, right);
+  // when absorption leaves a single term it is returned with only its own
+  // sources, which is correct: the absorbed terms are gone from the expression
   return terms.reduce((acc, term) =>
     new LogicalCondition(op, acc, term, sources)
   );
@@ -638,6 +812,34 @@ function collectTernarySources(
   return set;
 }
 
+/**
+ * A ternary renders as `cond && value || fallback`, which only works when the
+ * value is truthy: GitHub's `&&` yields its falsy operand, so a falsy value
+ * makes the whole expression fall through to the fallback no matter what the
+ * condition says. Dynamic values can't be checked, but literals can.
+ */
+function assertTruthyTernaryValue(value: TernaryValue): void {
+  if (!isStaticallyFalsy(value)) return;
+  throw new Error(
+    `A ternary value must not be falsy, but got ${
+      formatTernaryValue(value)
+    }. ` +
+      "GitHub evaluates `condition && value || fallback`, so a falsy value " +
+      "always falls through to the fallback.",
+  );
+}
+
+function isStaticallyFalsy(value: TernaryValue): boolean {
+  if (value instanceof ExpressionValue) {
+    const expression = value.expression;
+    if (literalTypeOf(expression) === "string") {
+      return unquoteStringLiteral(expression) === "";
+    }
+    return expression === "false" || expression === "0";
+  }
+  return value === false || value === 0 || value === "";
+}
+
 // whether a condition needs parentheses when used as `cond && value`
 function needsParensForTernary(condition: Condition): boolean {
   if (condition instanceof LogicalCondition && condition.op === "||") {
@@ -650,8 +852,12 @@ function needsParensForTernary(condition: Condition): boolean {
 }
 
 function formatTernaryValue(value: TernaryValue): string {
-  if (value instanceof ExpressionValue) return value.expression;
-  return formatLiteral(value);
+  if (!(value instanceof ExpressionValue)) return formatLiteral(value);
+  // a value that is itself a ternary (or any other logical expression) has to
+  // be parenthesized so it doesn't merge into the surrounding `&&`/`||` chain
+  return containsLogicalOperator(value.expression)
+    ? `(${value.expression})`
+    : value.expression;
 }
 
 /**
@@ -714,17 +920,23 @@ export class ElseIfBuilder {
 
   constructor(
     branches: TernaryBranch[],
-    sources: Set<ExpressionSource>,
+    sources: ReadonlySet<ExpressionSource>,
     condition: Condition,
   ) {
     this.#branches = branches;
-    this.#sources = sources;
+    // copy so that adding this branch's sources doesn't leak back into the
+    // builder this was created from
+    this.#sources = new Set(sources);
     for (const s of condition.sources) this.#sources.add(s);
     this.#condition = condition;
   }
 
-  /** Provide the value for this branch. */
+  /**
+   * Provide the value for this branch. Throws when the value is a falsy
+   * literal, which the encoding can't represent.
+   */
   then(value: TernaryValue): ThenBuilder {
+    assertTruthyTernaryValue(value);
     return new ThenBuilder(
       [...this.#branches, { condition: this.#condition, value }],
       this.#sources,
@@ -758,6 +970,8 @@ export function concat(...parts: ConcatPart[]): ExpressionValue {
   if (parts.length === 1) {
     const p = parts[0];
     if (p instanceof ExpressionValue) return p;
+    // concatenation produces a string, so a lone number renders as one too,
+    // matching what the multi-part path below does
     return new InlineValue(String(p));
   }
 
@@ -812,7 +1026,7 @@ export function concat(...parts: ConcatPart[]): ExpressionValue {
     } else {
       // escape single quotes and braces for GitHub Actions format()
       templateParts.push(
-        part.replace(/'/g, "''").replace(/\{/g, "{{").replace(/\}/g, "}}"),
+        escapeSingleQuotes(part).replaceAll("{", "{{").replaceAll("}", "}}"),
       );
     }
   }
@@ -886,6 +1100,9 @@ export function toJSON(value: ExpressionValue): ExpressionValue {
 export function hashFiles(
   ...patterns: (string | ExpressionValue)[]
 ): ExpressionValue {
+  if (patterns.length === 0) {
+    throw new Error("hashFiles requires at least one pattern.");
+  }
   const sources = new Set<ExpressionSource>();
   const args: string[] = [];
   for (const p of patterns) {
@@ -946,7 +1163,7 @@ class InlineValue extends ExpressionValue {
   readonly #plainValue: string;
 
   constructor(value: string | number) {
-    super(typeof value === "string" ? `'${value}'` : String(value));
+    super(formatLiteral(value));
     this.#plainValue = String(value);
   }
 
