@@ -12,6 +12,7 @@ export { Job, job } from "./job.ts";
 export type {
   JobConfig,
   JobDef,
+  JobDefaults,
   ReusableJobConfig,
   ReusableJobDef,
   RunsOn,
@@ -51,15 +52,10 @@ export type {
   ExprOf,
   TernaryValue,
 } from "./expression.ts";
-export {
-  collectActionVersions,
-  parsePinComments,
-  pinYamlContent,
-  pullVersionsInSource,
-  resolveRef,
-  unpinParsedYaml,
-} from "./pin.ts";
-export type { PinEntry, RefResolver, VersionChange } from "./pin.ts";
+// Only `RefResolver` belongs to the public API — it appears in the `pinDeps`
+// option of `writeOrLint`. The rest of `pin.ts` is implementation detail of
+// `writeOrLint` and the CLI.
+export type { RefResolver } from "./pin.ts";
 export { defineMatrix, Matrix } from "./matrix.ts";
 export type {
   PermissionLevel,
