@@ -57,7 +57,7 @@ workflow({
         setupDeno,
         {
           name: "Publish to JSR on tag",
-          run: "deno run -A jsr:@david/publish-on-tag@0.2.0",
+          run: "deno run -A @david/publish-on-tag",
         },
       ],
     },
