@@ -60,7 +60,7 @@ export async function runCli() {
 function pullVersions(workflowsDir: string) {
   const entries = fs.readdirSync(workflowsDir);
 
-  const yamlContents = findGeneratedYamlFiles(workflowsDir).map((f) =>
+  const yamlContents = findGeneratedYamlFiles(workflowsDir, entries).map((f) =>
     fs.readFileSync(f, "utf8")
   );
   const { versions, conflicts } = collectActionVersions(yamlContents);
@@ -113,8 +113,11 @@ function pullVersions(workflowsDir: string) {
  * the workflows directory plus a composite action's `action.yml` at the repo
  * root, since dependabot bumps the pins in both.
  */
-function findGeneratedYamlFiles(workflowsDir: string): string[] {
-  const files = fs.readdirSync(workflowsDir)
+function findGeneratedYamlFiles(
+  workflowsDir: string,
+  entries: readonly string[],
+): string[] {
+  const files = entries
     .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
     .map((f) => resolve(workflowsDir, f));
   const repoRoot = dirname(dirname(workflowsDir));
@@ -137,7 +140,7 @@ function findWorkflowsDir(): string | undefined {
 }
 
 function helpText(): string {
-  return `gagen — generate GitHub Actions workflows from TypeScript
+  return `gagen — generate GitHub Actions workflows and composite actions from TypeScript
 
 Usage:
   gagen [options]

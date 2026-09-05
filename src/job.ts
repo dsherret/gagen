@@ -160,7 +160,7 @@ function combineContexts(entry: GraphEntry): Condition | undefined {
     return toCondition(entry.contexts[0]);
   }
   const conditions = entry.contexts.map((c) => toCondition(c));
-  return simplifyOrConditions(conditions) ?? undefined;
+  return simplifyOrConditions(conditions);
 }
 
 /** ANDs two optional conditions together (for nesting StepRef conditions). */
@@ -232,7 +232,7 @@ function propagatableRunCondition(item: StepLike): ConditionLike | undefined {
     if (condition == null) return undefined;
     childConditions.push(toCondition(condition));
   }
-  return simplifyOrConditions(childConditions) ?? undefined;
+  return simplifyOrConditions(childConditions);
 }
 
 interface DeferredAfterDep {
@@ -591,6 +591,11 @@ export class Job implements ExpressionSource {
     return { graph, leafSteps, membership };
   }
 
+  /**
+   * Resolves every step the job runs, in execution order, with parallel group
+   * members flattened into the list. `#resolveUnits` is the grouped form used
+   * for serialization.
+   */
   [internal.resolveSteps](): Step<string>[] {
     const { graph, leafSteps } = this.#buildGraph();
     const priority = computePriorities(graph, leafSteps);
@@ -939,6 +944,19 @@ function assertOutputStepsAreEmitted(
   }
 }
 
+/** Creates a job with the given id. */
+export function job(id: string, config: JobDef): Job {
+  if ("uses" in config) {
+    const { id: _id, ...reusableConfig } = config;
+    return new Job(id, reusableConfig);
+  }
+  const { id: _id, steps, outputs, ...jobConfig } = config;
+  return new Job(id, jobConfig, {
+    steps: Array.isArray(steps) ? steps : [steps],
+    outputs,
+  });
+}
+
 // --- effective conditions ---
 
 /**
@@ -975,8 +993,9 @@ function computeEffectiveConditions(
  * 1. Deduplicates identical conditions (by expression string)
  * 2. Deduplicates AND-terms within each condition (A && B && A → A && B)
  * 3. Complement elimination: A && X || A && !X → A (with inline OR-flattening)
- * 4. Absorption: A || (A && B) → A
- * 5. Common factor extraction: (A && B) || (A && C) → A && (B || C)
+ * 4. Deduplicates again, since complement merges can produce duplicates
+ * 5. Absorption: A || (A && B) → A
+ * 6. Common factor extraction: (A && B) || (A && C) → A && (B || C)
  *
  * Note: OR-flattening is done inline during complement elimination (not upfront)
  * so that absorption can still match compound conditions against their parents.
@@ -1372,6 +1391,7 @@ function topoSort(
   return result;
 }
 
+/** Names a step in error messages by whatever the user gave it. */
 function stepLabel(s: Step<string>): string {
   return s.config.name ?? s.config.uses ?? s.id;
 }
@@ -1636,19 +1656,4 @@ function assertValidJobId(id: string): void {
       `Invalid job id ${JSON.stringify(id)}. ${JOB_ID_REQUIREMENT}`,
     );
   }
-}
-
-// --- job() free function ---
-
-/** Creates a job with the given id. */
-export function job(id: string, config: JobDef): Job {
-  if ("uses" in config) {
-    const { id: _id, ...reusableConfig } = config;
-    return new Job(id, reusableConfig);
-  }
-  const { id: _id, steps, outputs, ...jobConfig } = config;
-  return new Job(id, jobConfig, {
-    steps: Array.isArray(steps) ? steps : [steps],
-    outputs,
-  });
 }

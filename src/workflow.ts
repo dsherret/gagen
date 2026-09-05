@@ -13,13 +13,6 @@ import { type ConfigValue, serializeConfigValues, type Step } from "./step.ts";
 import { type WriteOrLintOptions, writeOrLintYaml } from "./write.ts";
 import fs from "node:fs";
 
-export {
-  assertKnownFlags,
-  isLinting,
-  isUpdatingPins,
-  KNOWN_FLAGS,
-} from "./write.ts";
-
 /** An input declared by a `workflow_call` trigger. */
 export interface WorkflowCallInput {
   type: "string" | "boolean" | "number";
