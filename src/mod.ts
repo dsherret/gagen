@@ -21,6 +21,13 @@ export type {
   StepsJobDef,
 } from "./job.ts";
 export { isLinting, Workflow, workflow } from "./workflow.ts";
+export type { WriteOrLintOptions } from "./write.ts";
+export { Action, action, ActionInputs, defineInputs } from "./action.ts";
+export type {
+  ActionConfig,
+  ActionInputDef,
+  ActionOutputDef,
+} from "./action.ts";
 export type {
   WorkflowCallInput,
   WorkflowCallOutput,

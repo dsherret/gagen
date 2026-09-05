@@ -841,8 +841,27 @@ export class Job implements ExpressionSource {
       result.services = services;
     }
 
-    // steps — resolved before outputs so outputs can be validated against the
-    // steps that actually survive condition filtering
+    const { steps, outputs } = this.toStepsYaml(`Job "${this.#id}"`, "job");
+    if (outputs != null) {
+      result.outputs = outputs;
+    }
+    result.steps = steps;
+
+    return result;
+  }
+
+  /**
+   * Serializes the job's resolved steps and the outputs declared against them.
+   *
+   * Steps are resolved before outputs so outputs can be validated against the
+   * steps that actually survive condition filtering. `owner` and `ownerNoun`
+   * name what the steps belong to in that validation's error message, so a
+   * composite action built on this method reports itself rather than a job.
+   */
+  toStepsYaml(
+    owner: string,
+    ownerNoun: string,
+  ): { steps: unknown[]; outputs: Record<string, string> | undefined } {
     const { graph } = this.#buildGraph();
     const units = this.#resolveUnits();
     const effectiveConditions = computeEffectiveConditions(
@@ -870,39 +889,45 @@ export class Job implements ExpressionSource {
       }
     }
 
+    let outputs: Record<string, string> | undefined;
     if (Object.keys(this.#outputDefs).length > 0) {
-      const outputs: Record<string, string> = {};
+      outputs = {};
       for (const [name, exprValue] of Object.entries(this.#outputDefs)) {
-        this.#assertOutputStepsAreEmitted(name, exprValue, emittedSteps);
+        assertOutputStepsAreEmitted(
+          owner,
+          ownerNoun,
+          name,
+          exprValue,
+          emittedSteps,
+        );
         outputs[name] = exprValue.toString();
       }
-      result.outputs = outputs;
     }
 
-    result.steps = steps;
-
-    return result;
+    return { steps, outputs };
   }
+}
 
-  /**
-   * Rejects a job output whose expression references a step this job does not
-   * emit — either a step belonging to another job, or one dropped because its
-   * condition is always false. GitHub resolves `steps.<id>.outputs.*` within
-   * the job only, so such an output would silently be empty at runtime.
-   */
-  #assertOutputStepsAreEmitted(
-    name: string,
-    value: ExpressionValue,
-    emittedSteps: Set<Step<string>>,
-  ): void {
-    for (const source of value.allSources) {
-      if (source instanceof Step && !emittedSteps.has(source)) {
-        throw new Error(
-          `Job "${this.#id}" output "${name}" references step "${
-            stepLabel(source)
-          }", which is not one of the job's steps.`,
-        );
-      }
+/**
+ * Rejects an output whose expression references a step its owner does not
+ * emit — either a step belonging to another job, or one dropped because its
+ * condition is always false. GitHub resolves `steps.<id>.outputs.*` within
+ * the job only, so such an output would silently be empty at runtime.
+ */
+function assertOutputStepsAreEmitted(
+  owner: string,
+  ownerNoun: string,
+  name: string,
+  value: ExpressionValue,
+  emittedSteps: Set<Step<string>>,
+): void {
+  for (const source of value.allSources) {
+    if (source instanceof Step && !emittedSteps.has(source)) {
+      throw new Error(
+        `${owner} output "${name}" references step "${
+          stepLabel(source)
+        }", which is not one of the ${ownerNoun}'s steps.`,
+      );
     }
   }
 }

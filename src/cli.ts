@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 import { collectActionVersions, pullVersionsInSource } from "./pin.ts";
-import { assertKnownFlags } from "./workflow.ts";
+import { assertKnownFlags } from "./write.ts";
 
 export async function runCli() {
   const args = process.argv.slice(2);
