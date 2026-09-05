@@ -57,6 +57,7 @@ export type {
   ExpressionSource,
   ExprMap,
   ExprOf,
+  Operand,
   TernaryValue,
 } from "./expression.ts";
 // Only `RefResolver` belongs to the public API — it appears in the `pinDeps`
