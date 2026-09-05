@@ -61,11 +61,11 @@ workflow({
 });
 ```
 
-Generate via the `gagen` cli, or run the script directly:
+Generate via the `gagen` cli:
 
 ```sh
 npx gagen
-# or
+# or alternatively run the script directly
 deno run -A .github/workflows/ci.ts
 ```
 
