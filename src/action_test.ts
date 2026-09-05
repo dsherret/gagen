@@ -266,9 +266,9 @@ Deno.test("defineInputs exposes typed input expressions", () => {
 
 Deno.test("defineInputs rejects an input that shadows a member", () => {
   assertThrows(
-    () => defineInputs({ toYaml: { description: "x" } }),
+    () => defineInputs({ constructor: { description: "x" } }),
     Error,
-    'Input "toYaml" conflicts with an ActionInputs member',
+    'Input "constructor" conflicts with an ActionInputs member',
   );
 });
 

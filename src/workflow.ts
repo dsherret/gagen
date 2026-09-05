@@ -1,3 +1,4 @@
+import * as internal from "./internal.ts";
 import { stringify } from "@std/yaml/stringify";
 import {
   Job,
@@ -153,7 +154,7 @@ export class Workflow {
     // pre-resolve all jobs and build step→job mapping for cross-job deps
     const stepOwners = new Map<Step<string>, Job[]>();
     for (const job of this.#jobs.values()) {
-      for (const s of job.resolveSteps()) {
+      for (const s of job[internal.resolveSteps]()) {
         let owners = stepOwners.get(s);
         if (!owners) {
           owners = [];
@@ -167,7 +168,7 @@ export class Workflow {
     const jobs: Record<string, unknown> = {};
     for (const [id, job] of this.#jobs) {
       this.#assertNeedsAreInWorkflow(id, job, stepOwners);
-      jobs[id] = job.toYaml(stepOwners);
+      jobs[id] = job[internal.toYaml](stepOwners);
     }
     obj.jobs = jobs;
 
@@ -208,7 +209,7 @@ export class Workflow {
     job: Job,
     stepOwners: Map<Step<string>, Job[]>,
   ): void {
-    for (const dep of job.inferNeeds(stepOwners)) {
+    for (const dep of job[internal.inferNeeds](stepOwners)) {
       if (!this.#jobs.has(dep.id)) {
         throw new Error(
           `Job "${id}" depends on job "${dep.id}", which is not part of this workflow.`,

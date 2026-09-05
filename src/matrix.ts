@@ -1,3 +1,4 @@
+import * as internal from "./internal.ts";
 import { Condition, ExpressionValue } from "./expression.ts";
 
 type ExtractMatrixKeys<T> =
@@ -38,8 +39,7 @@ export class Matrix<_K extends string> {
     matrixDefs.set(this as Matrix<string>, def);
     for (const key of keys) {
       if (key in this) {
-        // silently overwriting would break the shadowed member — `toYaml`
-        // in particular is called when the matrix is serialized
+        // silently overwriting would break the shadowed member
         throw new Error(
           `Matrix key "${key}" conflicts with a Matrix member — rename the key.`,
         );
@@ -51,7 +51,7 @@ export class Matrix<_K extends string> {
   }
 
   /** Serializes the matrix definition to its YAML form. */
-  toYaml(): Record<string, unknown> {
+  [internal.toYaml](): Record<string, unknown> {
     return serializeValue(matrixDefOf(this as Matrix<string>)) as Record<
       string,
       unknown
@@ -64,8 +64,8 @@ export class Matrix<_K extends string> {
  * ExpressionValue entries left intact.
  *
  * Needed to infer job `needs` from expressions embedded in a matrix — the
- * definition is otherwise only reachable through `toYaml`, which has already
- * flattened those entries to strings.
+ * definition is otherwise only reachable through its serialized form, which
+ * has already flattened those entries to strings.
  */
 export function matrixDefOf(matrix: Matrix<string>): Record<string, unknown> {
   return matrixDefs.get(matrix) ?? {};

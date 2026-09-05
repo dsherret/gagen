@@ -1,3 +1,4 @@
+import * as internal from "./internal.ts";
 import fs from "node:fs";
 import { stringify } from "@std/yaml/stringify";
 import { ExpressionValue } from "./expression.ts";
@@ -66,7 +67,7 @@ export class ActionInputs<_K extends string> {
   }
 
   /** Serializes the input definitions to their YAML form. */
-  toYaml(): Record<string, unknown> {
+  [internal.toYaml](): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     const defs = inputDefs.get(this as ActionInputs<string>) ?? {};
     for (const [name, def] of Object.entries(defs)) {
@@ -128,7 +129,7 @@ export class Action {
     }
 
     if (config.inputs != null) {
-      const inputs = config.inputs.toYaml();
+      const inputs = config.inputs[internal.toYaml]();
       if (Object.keys(inputs).length > 0) {
         obj.inputs = inputs;
       }
@@ -146,7 +147,7 @@ export class Action {
       steps: Array.isArray(config.steps) ? config.steps : [config.steps],
       outputs: stepOutputs,
     });
-    const { steps, outputs } = job.toStepsYaml(
+    const { steps, outputs } = job[internal.toStepsYaml](
       `Action "${config.name}"`,
       "action",
     );
@@ -248,7 +249,7 @@ function applyRunDefaults(
  * step that set them itself.
  *
  * `shell` counts as a header key so that a default `working-directory` lands
- * after a shell the step set itself, matching the order `Step.toYaml` uses.
+ * after a shell the step set itself, matching the order steps serialize in.
  */
 function insertAfterHeader(
   step: Record<string, unknown>,

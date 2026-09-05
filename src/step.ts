@@ -1,3 +1,4 @@
+import * as internal from "./internal.ts";
 import {
   Condition,
   type ExpressionSource,
@@ -190,7 +191,7 @@ export class Step<O extends string = never> implements ExpressionSource {
    * Serializes this step to its YAML object form. `effectiveIf` overrides
    * `config.if` with the condition resolved by the job's dependency graph.
    */
-  toYaml(effectiveIf?: Condition): Record<string, unknown> {
+  [internal.toYaml](effectiveIf?: Condition): Record<string, unknown> {
     const result: Record<string, unknown> = {};
 
     if (this.config.name != null) {
