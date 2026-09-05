@@ -233,6 +233,10 @@ ref.startsWith("refs/tags/").not();
 os.equals("linux").and(ref.startsWith("refs/tags/"));
 // => matrix.os == 'linux' && startsWith(github.ref, 'refs/tags/')
 
+// compare against another expression, ex. two step outputs
+after.outputs.hash.notEquals(before.outputs.hash);
+// => steps.after.outputs.hash != steps.before.outputs.hash
+
 // use on steps
 const deploy = step.dependsOn(build).if(
   ref.equals("refs/heads/main").and(os.equals("linux")),

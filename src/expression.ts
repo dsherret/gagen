@@ -8,6 +8,9 @@ const EMPTY_SOURCES: ReadonlySet<ExpressionSource> = new Set();
 /** Values that can appear in ternary `.then()` / `.else()` branches. */
 export type TernaryValue = string | number | boolean | ExpressionValue;
 
+/** Values that can be compared against: a literal or another expression. */
+export type Operand = string | number | boolean | ExpressionValue;
+
 /**
  * An expression that resolves to a value inside a GitHub Actions workflow.
  * Supports fluent comparison methods that produce Conditions.
@@ -41,8 +44,8 @@ export class ExpressionValue {
   }
 
   /** `this == value`, simplified when this value is a known literal */
-  equals(value: string | number | boolean): Condition {
-    const sources = sourcesFrom(this);
+  equals(value: Operand): Condition {
+    const sources = operandSources(this, value);
     const isEqual = literalEquality(this.#expression, value);
     if (isEqual != null) {
       return new RawCondition(isEqual ? "true" : "false", sources);
@@ -51,8 +54,8 @@ export class ExpressionValue {
   }
 
   /** `this != value`, simplified when this value is a known literal */
-  notEquals(value: string | number | boolean): Condition {
-    const sources = sourcesFrom(this);
+  notEquals(value: Operand): Condition {
+    const sources = operandSources(this, value);
     const isEqual = literalEquality(this.#expression, value);
     if (isEqual != null) {
       return new RawCondition(isEqual ? "false" : "true", sources);
@@ -61,29 +64,29 @@ export class ExpressionValue {
   }
 
   /** `startsWith(this, prefix)` */
-  startsWith(prefix: string): Condition {
+  startsWith(prefix: string | ExpressionValue): Condition {
     return new FunctionCallCondition(
       "startsWith",
-      [this.#expression, formatLiteral(prefix)],
-      sourcesFrom(this),
+      [this.#expression, formatOperand(prefix)],
+      operandSources(this, prefix),
     );
   }
 
   /** `endsWith(this, suffix)` */
-  endsWith(suffix: string): Condition {
+  endsWith(suffix: string | ExpressionValue): Condition {
     return new FunctionCallCondition(
       "endsWith",
-      [this.#expression, formatLiteral(suffix)],
-      sourcesFrom(this),
+      [this.#expression, formatOperand(suffix)],
+      operandSources(this, suffix),
     );
   }
 
   /** `contains(this, substring)` */
-  contains(substring: string): Condition {
+  contains(substring: string | ExpressionValue): Condition {
     return new FunctionCallCondition(
       "contains",
-      [this.#expression, formatLiteral(substring)],
-      sourcesFrom(this),
+      [this.#expression, formatOperand(substring)],
+      operandSources(this, substring),
     );
   }
 
@@ -98,42 +101,42 @@ export class ExpressionValue {
   }
 
   /** `this > value` */
-  greaterThan(value: number): Condition {
+  greaterThan(value: number | ExpressionValue): Condition {
     return new ComparisonCondition(
       this.#expression,
       ">",
       value,
-      sourcesFrom(this),
+      operandSources(this, value),
     );
   }
 
   /** `this >= value` */
-  greaterThanOrEqual(value: number): Condition {
+  greaterThanOrEqual(value: number | ExpressionValue): Condition {
     return new ComparisonCondition(
       this.#expression,
       ">=",
       value,
-      sourcesFrom(this),
+      operandSources(this, value),
     );
   }
 
   /** `this < value` */
-  lessThan(value: number): Condition {
+  lessThan(value: number | ExpressionValue): Condition {
     return new ComparisonCondition(
       this.#expression,
       "<",
       value,
-      sourcesFrom(this),
+      operandSources(this, value),
     );
   }
 
   /** `this <= value` */
-  lessThanOrEqual(value: number): Condition {
+  lessThanOrEqual(value: number | ExpressionValue): Condition {
     return new ComparisonCondition(
       this.#expression,
       "<=",
       value,
-      sourcesFrom(this),
+      operandSources(this, value),
     );
   }
 
@@ -287,25 +290,26 @@ const NEGATED_OP: Record<ComparisonOp, ComparisonOp> = {
 export class ComparisonCondition extends Condition {
   readonly #left: string;
   readonly #op: ComparisonOp;
-  readonly #right: string | number | boolean;
+  /** The rendered right side: a formatted literal or a raw expression. */
+  readonly #right: string;
 
   constructor(
     left: string,
     op: ComparisonOp,
-    right: string | number | boolean,
+    right: Operand,
     sources: ReadonlySet<ExpressionSource>,
   ) {
     super(sources);
     this.#left = left;
     this.#op = op;
-    this.#right = right;
+    this.#right = formatOperand(right);
   }
 
   override not(): Condition {
     return new ComparisonCondition(
       this.#left,
       NEGATED_OP[this.#op],
-      this.#right,
+      new ExpressionValue(this.#right),
       this.sources,
     );
   }
@@ -316,7 +320,7 @@ export class ComparisonCondition extends Condition {
     return new ComparisonCondition(
       this.#left,
       this.#op,
-      this.#right,
+      new ExpressionValue(this.#right),
       mergeSources(this.sources, sources),
     );
   }
@@ -327,7 +331,7 @@ export class ComparisonCondition extends Condition {
     const left = containsLogicalOperator(this.#left)
       ? `(${this.#left})`
       : this.#left;
-    return `${left} ${this.#op} ${formatLiteral(this.#right)}`;
+    return `${left} ${this.#op} ${this.#right}`;
   }
 }
 
@@ -660,6 +664,27 @@ export function formatLiteral(value: string | number | boolean): string {
   return String(value);
 }
 
+/**
+ * Renders a comparison or function argument: a literal is quoted, while an
+ * expression is inserted as-is, parenthesized when it's a ternary or other
+ * logical expression since those bind less tightly than a comparison.
+ */
+function formatOperand(value: Operand): string {
+  if (!(value instanceof ExpressionValue)) return formatLiteral(value);
+  const expression = value.expression;
+  return containsLogicalOperator(expression) ? `(${expression})` : expression;
+}
+
+/** The sources of an expression and, when it's an expression, its operand. */
+function operandSources(
+  left: ExpressionValue,
+  right: Operand,
+): ReadonlySet<ExpressionSource> {
+  return right instanceof ExpressionValue
+    ? sourcesFrom(left, right)
+    : sourcesFrom(left);
+}
+
 /** Collects the sources of any number of expression values or conditions. */
 export function sourcesFrom(
   ...values: (ExpressionValue | Condition)[]
@@ -697,8 +722,9 @@ function escapeSingleQuotes(value: string): string {
  */
 function literalEquality(
   expression: string,
-  value: string | number | boolean,
+  value: Operand,
 ): boolean | undefined {
+  if (value instanceof ExpressionValue) return undefined;
   const valueType = typeof value;
   if (literalTypeOf(expression) !== valueType) return undefined;
   if (typeof value === "string") {

@@ -153,6 +153,81 @@ Deno.test("ExpressionValue source flows into notEquals", () => {
   assertEquals(v.notEquals("fail").sources.has(src), true);
 });
 
+Deno.test("ExpressionValue equals another expression", () => {
+  const before = new ExpressionValue("steps.before.outputs.hash");
+  const after = new ExpressionValue("steps.after.outputs.hash");
+  assertEquals(
+    after.equals(before).toExpression(),
+    "steps.after.outputs.hash == steps.before.outputs.hash",
+  );
+  assertEquals(
+    after.notEquals(before).toExpression(),
+    "steps.after.outputs.hash != steps.before.outputs.hash",
+  );
+  assertEquals(
+    after.notEquals(before).not().toExpression(),
+    "steps.after.outputs.hash == steps.before.outputs.hash",
+  );
+});
+
+Deno.test("ExpressionValue compared to a ternary parenthesizes it", () => {
+  const os = new ExpressionValue("matrix.os");
+  const runner = os.equals("linux").then("ubuntu").else("macos");
+  assertEquals(
+    new ExpressionValue("inputs.runner").equals(runner).toExpression(),
+    "inputs.runner == (matrix.os == 'linux' && 'ubuntu' || 'macos')",
+  );
+});
+
+Deno.test("ExpressionValue sources flow from both sides of a comparison", () => {
+  const leftSrc = { id: "step_after" };
+  const rightSrc = { id: "step_before" };
+  const after = new ExpressionValue("steps.after.outputs.hash", leftSrc);
+  const before = new ExpressionValue("steps.before.outputs.hash", rightSrc);
+  const c = after.notEquals(before);
+  assertEquals(c.sources.has(leftSrc), true);
+  assertEquals(c.sources.has(rightSrc), true);
+  // and survive negation and source merging
+  assertEquals(c.not().sources.has(rightSrc), true);
+});
+
+Deno.test("ExpressionValue number comparisons accept an expression", () => {
+  const count = new ExpressionValue("steps.count.outputs.value");
+  const limit = new ExpressionValue("inputs.limit");
+  assertEquals(
+    count.greaterThan(limit).toExpression(),
+    "steps.count.outputs.value > inputs.limit",
+  );
+  assertEquals(
+    count.lessThanOrEqual(limit).toExpression(),
+    "steps.count.outputs.value <= inputs.limit",
+  );
+});
+
+Deno.test("ExpressionValue string functions accept an expression", () => {
+  const src = { id: "step_1" };
+  const ref = new ExpressionValue("github.ref");
+  const prefix = new ExpressionValue("steps.prefix.outputs.value", src);
+  const c = ref.startsWith(prefix);
+  assertEquals(
+    c.toExpression(),
+    "startsWith(github.ref, steps.prefix.outputs.value)",
+  );
+  assertEquals(c.sources.has(src), true);
+  assertEquals(
+    ref.contains(prefix).toExpression(),
+    "contains(github.ref, steps.prefix.outputs.value)",
+  );
+});
+
+Deno.test("literal equals an expression does not simplify", () => {
+  const value = new ExpressionValue("'linux'");
+  assertEquals(
+    value.equals(new ExpressionValue("matrix.os")).toExpression(),
+    "'linux' == matrix.os",
+  );
+});
+
 Deno.test("ExpressionValue source flows into startsWith", () => {
   const src = { id: "step_1" };
   const v = new ExpressionValue("steps.check.outputs.ref", src);
