@@ -57,7 +57,7 @@ export function writeOrLintYaml(
       // reuse previously resolved hashes from existing file to avoid
       // redundant git ls-remote calls on subsequent runs
       let cache: PinEntry[] | undefined;
-      if (!isUpdatingPins()) {
+      if (!isUpdatingPinsNow()) {
         try {
           const existing = fs.readFileSync(options.filePath, {
             encoding: "utf8",
@@ -74,7 +74,11 @@ export function writeOrLintYaml(
   }
 }
 
-/** Gets if linting would occur when using `writeOrLint`. */
+/**
+ * Gets if `writeOrLint` will lint the generated files instead of writing them
+ * (`--lint`). Useful for skipping work in a script that only makes sense when
+ * generating.
+ */
 export const isLinting: boolean = isLintingNow();
 
 /**
@@ -88,8 +92,14 @@ function isLintingNow(): boolean {
   return process.argv.includes("--lint");
 }
 
-/** Gets if pins should be re-resolved when using `writeOrLint`. */
-export function isUpdatingPins(): boolean {
+/**
+ * Gets if `writeOrLint` will re-resolve every pinned action instead of reusing
+ * the hashes in the existing file (`--update-pins`).
+ */
+export const isUpdatingPins: boolean = isUpdatingPinsNow();
+
+/** Gets if pins should be re-resolved, reading the flags on each call. */
+function isUpdatingPinsNow(): boolean {
   return process.argv.includes("--update-pins");
 }
 

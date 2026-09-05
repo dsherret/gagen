@@ -21,9 +21,6 @@ export const resolveSteps: unique symbol = Symbol("gagen.resolveSteps");
 /** Infers the jobs a job depends on. */
 export const inferNeeds: unique symbol = Symbol("gagen.inferNeeds");
 
-/** The single source an expression value was created from, if any. */
-export const source: unique symbol = Symbol("gagen.source");
-
 /** Every source an expression value references. */
 export const allSources: unique symbol = Symbol("gagen.allSources");
 

@@ -535,7 +535,7 @@ export class StepRef<O extends string = never> {
   }
 }
 
-// --- serialization helpers ---
+// --- validation and serialization helpers ---
 
 /**
  * Validates that a step does not combine mutually exclusive control keys.
@@ -623,7 +623,7 @@ export function normalizeStepLike(
   return stepFromConfig(item);
 }
 
-/** Extracts the underlying Step from a StepLike (Step or StepRef). */
+/** Extracts the underlying Step from a StepLike (Step, StepRef, or plain config). */
 export function unwrapStep(item: StepLike): Step<string> {
   const normalized = normalizeStepLike(item);
   return normalized instanceof StepRef ? normalized.step : normalized;

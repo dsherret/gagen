@@ -135,14 +135,13 @@ Deno.test("ExpressionValue chaining or().and() from values", () => {
 
 Deno.test("ExpressionValue no source by default", () => {
   const v = new ExpressionValue("github.ref");
-  assertEquals(v[internal.source], undefined);
   assertEquals(v.equals("main").sources.size, 0);
 });
 
 Deno.test("ExpressionValue source flows into equals", () => {
   const src = { id: "step_1" };
   const v = new ExpressionValue("steps.check.outputs.result", src);
-  assertEquals(v[internal.source], src);
+  assertEquals([...v[internal.allSources]], [src]);
   const c = v.equals("success");
   assertEquals(c.sources.size, 1);
   assertEquals(c.sources.has(src), true);
@@ -1544,11 +1543,10 @@ Deno.test("sourcesFrom deduplicates and tolerates missing sources", () => {
   assertEquals(set.size, 1);
 });
 
-Deno.test("ExpressionValue built from a source set has no single source", () => {
+Deno.test("ExpressionValue built from a source set tracks every source", () => {
   const s1 = { id: "s1" };
   const s2 = { id: "s2" };
   const v = new ExpressionValue("a", new Set([s1, s2]));
-  assertEquals(v[internal.source], undefined);
   assertEquals(v[internal.allSources].size, 2);
   assertEquals(v.equals("x").sources.size, 2);
 });

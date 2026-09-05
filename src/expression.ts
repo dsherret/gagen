@@ -1,7 +1,5 @@
 import * as internal from "./internal.ts";
 
-// types that step/job/workflow will reference back to
-
 /** Something an expression can depend on, such as a step or a job. */
 export type ExpressionSource = { readonly id: string };
 
@@ -16,7 +14,6 @@ export type TernaryValue = string | number | boolean | ExpressionValue;
  */
 export class ExpressionValue {
   readonly #expression: string;
-  readonly [internal.source]: ExpressionSource | undefined;
   readonly #allSources: ReadonlySet<ExpressionSource>;
 
   constructor(
@@ -25,12 +22,11 @@ export class ExpressionValue {
   ) {
     this.#expression = expression;
     if (source instanceof Set) {
-      this[internal.source] = undefined;
       this.#allSources = source as ReadonlySet<ExpressionSource>;
     } else {
-      const s = source as ExpressionSource | undefined;
-      this[internal.source] = s;
-      this.#allSources = s ? new Set([s]) : EMPTY_SOURCES;
+      this.#allSources = source
+        ? new Set([source as ExpressionSource])
+        : EMPTY_SOURCES;
     }
   }
 
@@ -229,17 +225,28 @@ export abstract class Condition {
     return [this];
   }
 
-  /** returns true if this condition always evaluates to true */
+  /**
+   * Gets if this condition is statically known to be true, such as
+   * `conditions.isTrue()` or a comparison of two equal literals. Steps and
+   * jobs with such a condition serialize without an `if`.
+   */
   isAlwaysTrue(): boolean {
     return false;
   }
 
-  /** returns true if this condition always evaluates to false */
+  /**
+   * Gets if this condition is statically known to be false. Steps with such a
+   * condition are dropped from the generated job entirely.
+   */
   isAlwaysFalse(): boolean {
     return false;
   }
 
-  /** returns true if this condition could possibly evaluate to true */
+  /**
+   * Gets if this condition could evaluate to true at runtime, meaning it is
+   * not statically known to be false. Handy for deciding in a script whether a
+   * conditional step will be emitted at all.
+   */
   isPossiblyTrue(): boolean {
     return !this.isAlwaysFalse();
   }
@@ -655,10 +662,10 @@ export function formatLiteral(value: string | number | boolean): string {
 
 /** Collects the sources of any number of expression values or conditions. */
 export function sourcesFrom(
-  ...sourceables: (ExpressionValue | Condition)[]
+  ...values: (ExpressionValue | Condition)[]
 ): ReadonlySet<ExpressionSource> {
   const set = new Set<ExpressionSource>();
-  for (const v of sourceables) {
+  for (const v of values) {
     if (v instanceof Condition) {
       for (const s of v.sources) set.add(s);
     } else {
@@ -815,72 +822,6 @@ function deduplicatedLogical(
 
 // --- ternary expression builders ---
 
-interface TernaryBranch {
-  condition: Condition;
-  value: TernaryValue;
-}
-
-function collectTernarySources(
-  branches: TernaryBranch[],
-): Set<ExpressionSource> {
-  const set = new Set<ExpressionSource>();
-  for (const { condition, value } of branches) {
-    for (const s of condition.sources) set.add(s);
-    if (value instanceof ExpressionValue) {
-      for (const s of value[internal.allSources]) set.add(s);
-    }
-  }
-  return set;
-}
-
-/**
- * A ternary renders as `cond && value || fallback`, which only works when the
- * value is truthy: GitHub's `&&` yields its falsy operand, so a falsy value
- * makes the whole expression fall through to the fallback no matter what the
- * condition says. Dynamic values can't be checked, but literals can.
- */
-function assertTruthyTernaryValue(value: TernaryValue): void {
-  if (!isStaticallyFalsy(value)) return;
-  throw new Error(
-    `A ternary value must not be falsy, but got ${
-      formatTernaryValue(value)
-    }. ` +
-      "GitHub evaluates `condition && value || fallback`, so a falsy value " +
-      "always falls through to the fallback.",
-  );
-}
-
-function isStaticallyFalsy(value: TernaryValue): boolean {
-  if (value instanceof ExpressionValue) {
-    const expression = value.expression;
-    if (literalTypeOf(expression) === "string") {
-      return unquoteStringLiteral(expression) === "";
-    }
-    return expression === "false" || expression === "0";
-  }
-  return value === false || value === 0 || value === "";
-}
-
-// whether a condition needs parentheses when used as `cond && value`
-function needsParensForTernary(condition: Condition): boolean {
-  if (condition instanceof LogicalCondition && condition.op === "||") {
-    return true;
-  }
-  if (condition instanceof RawCondition) {
-    return condition.toExpression().includes("||");
-  }
-  return false;
-}
-
-function formatTernaryValue(value: TernaryValue): string {
-  if (!(value instanceof ExpressionValue)) return formatLiteral(value);
-  // a value that is itself a ternary (or any other logical expression) has to
-  // be parenthesized so it doesn't merge into the surrounding `&&`/`||` chain
-  return containsLogicalOperator(value.expression)
-    ? `(${value.expression})`
-    : value.expression;
-}
-
 /**
  * Intermediate builder after `.then(value)`. Call `.else()` to produce the
  * final `ExpressionValue`, or `.elseIf()` to add another branch.
@@ -963,6 +904,72 @@ export class ElseIfBuilder {
       this.#sources,
     );
   }
+}
+
+interface TernaryBranch {
+  condition: Condition;
+  value: TernaryValue;
+}
+
+function collectTernarySources(
+  branches: TernaryBranch[],
+): Set<ExpressionSource> {
+  const set = new Set<ExpressionSource>();
+  for (const { condition, value } of branches) {
+    for (const s of condition.sources) set.add(s);
+    if (value instanceof ExpressionValue) {
+      for (const s of value[internal.allSources]) set.add(s);
+    }
+  }
+  return set;
+}
+
+/**
+ * A ternary renders as `cond && value || fallback`, which only works when the
+ * value is truthy: GitHub's `&&` yields its falsy operand, so a falsy value
+ * makes the whole expression fall through to the fallback no matter what the
+ * condition says. Dynamic values can't be checked, but literals can.
+ */
+function assertTruthyTernaryValue(value: TernaryValue): void {
+  if (!isStaticallyFalsy(value)) return;
+  throw new Error(
+    `A ternary value must not be falsy, but got ${
+      formatTernaryValue(value)
+    }. ` +
+      "GitHub evaluates `condition && value || fallback`, so a falsy value " +
+      "always falls through to the fallback.",
+  );
+}
+
+function isStaticallyFalsy(value: TernaryValue): boolean {
+  if (value instanceof ExpressionValue) {
+    const expression = value.expression;
+    if (literalTypeOf(expression) === "string") {
+      return unquoteStringLiteral(expression) === "";
+    }
+    return expression === "false" || expression === "0";
+  }
+  return value === false || value === 0 || value === "";
+}
+
+// whether a condition needs parentheses when used as `cond && value`
+function needsParensForTernary(condition: Condition): boolean {
+  if (condition instanceof LogicalCondition && condition.op === "||") {
+    return true;
+  }
+  if (condition instanceof RawCondition) {
+    return condition.toExpression().includes("||");
+  }
+  return false;
+}
+
+function formatTernaryValue(value: TernaryValue): string {
+  if (!(value instanceof ExpressionValue)) return formatLiteral(value);
+  // a value that is itself a ternary (or any other logical expression) has to
+  // be parenthesized so it doesn't merge into the surrounding `&&`/`||` chain
+  return containsLogicalOperator(value.expression)
+    ? `(${value.expression})`
+    : value.expression;
 }
 
 // --- string concatenation ---

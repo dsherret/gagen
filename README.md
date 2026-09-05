@@ -61,11 +61,12 @@ workflow({
 });
 ```
 
-Generate via the `gagen` cli:
+Generate via the `gagen` cli, or run the script directly:
 
 ```sh
-# or alternatively run the script directly
 npx gagen
+# or
+deno run -A .github/workflows/ci.ts
 ```
 
 This generates a `ci.generated.yml` with steps in the correct order and figures
