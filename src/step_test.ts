@@ -1,3 +1,4 @@
+import * as internal from "./internal.ts";
 import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   artifact,
@@ -853,9 +854,9 @@ jobs:
 Deno.test("a matrix key that would shadow a Matrix member throws", () => {
   setup();
   assertThrows(
-    () => defineMatrix({ toYaml: ["a", "b"] } as Record<string, unknown>),
+    () => defineMatrix({ constructor: ["a", "b"] } as Record<string, unknown>),
     Error,
-    'Matrix key "toYaml" conflicts with a Matrix member',
+    'Matrix key "constructor" conflicts with a Matrix member',
   );
 });
 
@@ -870,12 +871,14 @@ Deno.test("matrixDefOf exposes the unserialized definition and its sources", () 
 
   // toYaml has already flattened the expression to a string, so needs
   // inference has to read the definition through matrixDefOf instead
-  assertEquals(matrix.toYaml(), {
+  assertEquals(matrix[internal.toYaml](), {
     version: "${{ fromJSON(steps.produce.outputs.versions) }}",
   });
   const def = matrixDefOf(matrix);
   assertEquals(Object.keys(def), ["version"]);
-  assertEquals([...(def.version as ExpressionValue).allSources], [produce]);
+  assertEquals([...(def.version as ExpressionValue)[internal.allSources]], [
+    produce,
+  ]);
 });
 
 Deno.test("a matrix built from a job output infers needs on that job", () => {
@@ -934,17 +937,17 @@ jobs:
 Deno.test("Step.toYaml omits generated ids and honours an effective condition", () => {
   setup();
   const generated = step({ name: "Generated", run: "g" });
-  assertEquals(generated.toYaml(), { name: "Generated", run: "g" });
+  assertEquals(generated[internal.toYaml](), { name: "Generated", run: "g" });
 
   const explicit = step({ id: "explicit", name: "Explicit", run: "e" });
-  assertEquals(explicit.toYaml(), {
+  assertEquals(explicit[internal.toYaml](), {
     name: "Explicit",
     id: "explicit",
     run: "e",
   });
 
   const conditional = step({ name: "C", run: "c", if: isBranch("main") });
-  assertEquals(conditional.toYaml(isTag()), {
+  assertEquals(conditional[internal.toYaml](isTag()), {
     name: "C",
     if: "startsWith(github.ref, 'refs/tags/')",
     run: "c",

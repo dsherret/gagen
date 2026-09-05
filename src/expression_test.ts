@@ -1,3 +1,4 @@
+import * as internal from "./internal.ts";
 import { assertEquals, assertThrows } from "@std/assert";
 import {
   ComparisonCondition,
@@ -134,14 +135,14 @@ Deno.test("ExpressionValue chaining or().and() from values", () => {
 
 Deno.test("ExpressionValue no source by default", () => {
   const v = new ExpressionValue("github.ref");
-  assertEquals(v.source, undefined);
+  assertEquals(v[internal.source], undefined);
   assertEquals(v.equals("main").sources.size, 0);
 });
 
 Deno.test("ExpressionValue source flows into equals", () => {
   const src = { id: "step_1" };
   const v = new ExpressionValue("steps.check.outputs.result", src);
-  assertEquals(v.source, src);
+  assertEquals(v[internal.source], src);
   const c = v.equals("success");
   assertEquals(c.sources.size, 1);
   assertEquals(c.sources.has(src), true);
@@ -796,9 +797,9 @@ Deno.test("concat tracks sources from all expressions", () => {
   const v1 = new ExpressionValue("steps.a.outputs.x", s1);
   const v2 = new ExpressionValue("steps.b.outputs.y", s2);
   const v = concat("prefix-", v1, "-", v2);
-  assertEquals(v.allSources.size, 2);
-  assertEquals(v.allSources.has(s1), true);
-  assertEquals(v.allSources.has(s2), true);
+  assertEquals(v[internal.allSources].size, 2);
+  assertEquals(v[internal.allSources].has(s1), true);
+  assertEquals(v[internal.allSources].has(s2), true);
 });
 
 Deno.test("concat result works with .equals()", () => {
@@ -936,8 +937,8 @@ Deno.test("fromJSON tracks sources", () => {
   const s = { id: "s1" };
   const v = new ExpressionValue("needs.setup.outputs.matrix", s);
   const result = fromJSON(v);
-  assertEquals(result.allSources.size, 1);
-  assertEquals(result.allSources.has(s), true);
+  assertEquals(result[internal.allSources].size, 1);
+  assertEquals(result[internal.allSources].has(s), true);
 });
 
 // --- toJSON ---
@@ -952,8 +953,8 @@ Deno.test("toJSON tracks sources", () => {
   const s = { id: "s1" };
   const v = new ExpressionValue("steps.a.outputs.data", s);
   const result = toJSON(v);
-  assertEquals(result.allSources.size, 1);
-  assertEquals(result.allSources.has(s), true);
+  assertEquals(result[internal.allSources].size, 1);
+  assertEquals(result[internal.allSources].has(s), true);
 });
 
 Deno.test("ExpressionValue.toJSON() method", () => {
@@ -987,8 +988,8 @@ Deno.test("hashFiles tracks sources from expression patterns", () => {
   const s = { id: "s1" };
   const v = new ExpressionValue("steps.a.outputs.pattern", s);
   const result = hashFiles(v);
-  assertEquals(result.allSources.size, 1);
-  assertEquals(result.allSources.has(s), true);
+  assertEquals(result[internal.allSources].size, 1);
+  assertEquals(result[internal.allSources].has(s), true);
 });
 
 Deno.test("hashFiles result works with concat for cache keys", () => {
@@ -1024,8 +1025,8 @@ Deno.test("join tracks sources", () => {
   const s = { id: "s1" };
   const v = new ExpressionValue("steps.a.outputs.list", s);
   const result = join(v, ",");
-  assertEquals(result.allSources.size, 1);
-  assertEquals(result.allSources.has(s), true);
+  assertEquals(result[internal.allSources].size, 1);
+  assertEquals(result[internal.allSources].has(s), true);
 });
 
 Deno.test("join with an empty separator", () => {
@@ -1363,10 +1364,10 @@ Deno.test("ternary collects sources from conditions and values", () => {
   const v = cmp("a", "1", [s1])
     .then(new ExpressionValue("steps.b.outputs.x", s2))
     .else(new ExpressionValue("steps.c.outputs.y", s3));
-  assertEquals(v.allSources.size, 3);
-  assertEquals(v.allSources.has(s1), true);
-  assertEquals(v.allSources.has(s2), true);
-  assertEquals(v.allSources.has(s3), true);
+  assertEquals(v[internal.allSources].size, 3);
+  assertEquals(v[internal.allSources].has(s1), true);
+  assertEquals(v[internal.allSources].has(s2), true);
+  assertEquals(v[internal.allSources].has(s3), true);
 });
 
 Deno.test("ternary collects sources from elseIf branches", () => {
@@ -1377,14 +1378,14 @@ Deno.test("ternary collects sources from elseIf branches", () => {
     .elseIf(cmp("b", "2", [s2]))
     .then("y")
     .else("z");
-  assertEquals(v.allSources.size, 2);
+  assertEquals(v[internal.allSources].size, 2);
 });
 
 Deno.test("elseIf does not leak sources into the builder it came from", () => {
   const s2 = { id: "s2" };
   const builder = cmp("a", "1").then("x");
   builder.elseIf(cmp("b", "2", [s2]));
-  assertEquals(builder.else("z").allSources.size, 0);
+  assertEquals(builder.else("z")[internal.allSources].size, 0);
 });
 
 Deno.test("ternary can be used as a concat part", () => {
@@ -1521,19 +1522,16 @@ Deno.test("isPossiblyTrue reflects always-false", () => {
 
 // --- sourcesFrom ---
 
-Deno.test("sourcesFrom collects from values, conditions, and sourceables", () => {
+Deno.test("sourcesFrom collects from values and conditions", () => {
   const s1 = { id: "s1" };
   const s2 = { id: "s2" };
-  const s3 = { id: "s3" };
   const set = sourcesFrom(
     new ExpressionValue("a", s1),
     cmp("b", "2", [s2]),
-    { source: s3 },
   );
-  assertEquals(set.size, 3);
+  assertEquals(set.size, 2);
   assertEquals(set.has(s1), true);
   assertEquals(set.has(s2), true);
-  assertEquals(set.has(s3), true);
 });
 
 Deno.test("sourcesFrom deduplicates and tolerates missing sources", () => {
@@ -1541,7 +1539,7 @@ Deno.test("sourcesFrom deduplicates and tolerates missing sources", () => {
   const set = sourcesFrom(
     new ExpressionValue("a", s1),
     new ExpressionValue("b", s1),
-    { source: undefined },
+    new ExpressionValue("c"),
   );
   assertEquals(set.size, 1);
 });
@@ -1550,8 +1548,8 @@ Deno.test("ExpressionValue built from a source set has no single source", () => 
   const s1 = { id: "s1" };
   const s2 = { id: "s2" };
   const v = new ExpressionValue("a", new Set([s1, s2]));
-  assertEquals(v.source, undefined);
-  assertEquals(v.allSources.size, 2);
+  assertEquals(v[internal.source], undefined);
+  assertEquals(v[internal.allSources].size, 2);
   assertEquals(v.equals("x").sources.size, 2);
 });
 
@@ -1559,30 +1557,30 @@ Deno.test("ExpressionValue built from a source set has no single source", () => 
 
 Deno.test("flattenAnd flattens nested ands only", () => {
   const c = cmp("a", "1").and(cmp("b", "2")).and(cmp("c", "3"));
-  assertEquals(c.flattenAnd().map((t) => t.toExpression()), [
+  assertEquals(c[internal.flattenAnd]().map((t) => t.toExpression()), [
     "a == '1'",
     "b == '2'",
     "c == '3'",
   ]);
-  assertEquals(c.flattenOr().length, 1);
+  assertEquals(c[internal.flattenOr]().length, 1);
 });
 
 Deno.test("flattenOr flattens nested ors only", () => {
   const c = cmp("a", "1").or(cmp("b", "2")).or(cmp("c", "3"));
-  assertEquals(c.flattenOr().map((t) => t.toExpression()), [
+  assertEquals(c[internal.flattenOr]().map((t) => t.toExpression()), [
     "a == '1'",
     "b == '2'",
     "c == '3'",
   ]);
-  assertEquals(c.flattenAnd().length, 1);
+  assertEquals(c[internal.flattenAnd]().length, 1);
 });
 
 Deno.test("getAndTerms returns and terms but not or terms", () => {
-  assertEquals(cmp("a", "1").and(cmp("b", "2")).getAndTerms(), [
+  assertEquals(cmp("a", "1").and(cmp("b", "2"))[internal.getAndTerms](), [
     "a == '1'",
     "b == '2'",
   ]);
-  assertEquals(cmp("a", "1").or(cmp("b", "2")).getAndTerms(), [
+  assertEquals(cmp("a", "1").or(cmp("b", "2"))[internal.getAndTerms](), [
     "a == '1' || b == '2'",
   ]);
 });
@@ -1634,8 +1632,8 @@ Deno.test("or keeps sources when every right term is already present", () => {
 Deno.test("withSources returns the same condition when nothing is added", () => {
   const s1 = { id: "s1" };
   const c = cmp("a", "1", [s1]);
-  assertEquals(c.withSources(new Set([s1])), c);
-  assertEquals(c.withSources(new Set()), c);
+  assertEquals(c[internal.withSources](new Set([s1])), c);
+  assertEquals(c[internal.withSources](new Set()), c);
 });
 
 Deno.test("withSources preserves rendering for every condition kind", () => {
@@ -1649,7 +1647,7 @@ Deno.test("withSources preserves rendering for every condition kind", () => {
     cmp("a", "1").and(cmp("b", "2")),
   ];
   for (const c of kinds) {
-    const withExtra = c.withSources(extra);
+    const withExtra = c[internal.withSources](extra);
     assertEquals(withExtra.toExpression(), c.toExpression());
     assertEquals(withExtra.sources.has(s), true);
   }
@@ -1715,8 +1713,8 @@ Deno.test("concat preserves sources through nesting", () => {
   const s1 = { id: "s1" };
   const inner = concat("a-", new ExpressionValue("steps.a.outputs.x", s1));
   const outer = concat(inner, "-b");
-  assertEquals(outer.allSources.size, 1);
-  assertEquals(outer.allSources.has(s1), true);
+  assertEquals(outer[internal.allSources].size, 1);
+  assertEquals(outer[internal.allSources].has(s1), true);
 });
 
 Deno.test("concat result can be negated", () => {
@@ -1737,7 +1735,7 @@ Deno.test("fromJSON of toJSON round trips the expression text", () => {
 });
 
 Deno.test("fromJSON of a string carries no sources", () => {
-  assertEquals(fromJSON("[1, 2]").allSources.size, 0);
+  assertEquals(fromJSON("[1, 2]")[internal.allSources].size, 0);
 });
 
 Deno.test("fromJSON result supports comparisons", () => {
@@ -1762,7 +1760,7 @@ Deno.test("hashFiles mixes string and expression patterns", () => {
   const s = { id: "s1" };
   const v = hashFiles("deno.lock", new ExpressionValue("matrix.extra", s));
   assertEquals(v.expression, "hashFiles('deno.lock', matrix.extra)");
-  assertEquals(v.allSources.has(s), true);
+  assertEquals(v[internal.allSources].has(s), true);
 });
 
 // --- defineExprObj error path ---

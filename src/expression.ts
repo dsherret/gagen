@@ -1,3 +1,5 @@
+import * as internal from "./internal.ts";
+
 // types that step/job/workflow will reference back to
 
 /** Something an expression can depend on, such as a step or a job. */
@@ -14,7 +16,7 @@ export type TernaryValue = string | number | boolean | ExpressionValue;
  */
 export class ExpressionValue {
   readonly #expression: string;
-  readonly source: ExpressionSource | undefined;
+  readonly [internal.source]: ExpressionSource | undefined;
   readonly #allSources: ReadonlySet<ExpressionSource>;
 
   constructor(
@@ -23,17 +25,17 @@ export class ExpressionValue {
   ) {
     this.#expression = expression;
     if (source instanceof Set) {
-      this.source = undefined;
+      this[internal.source] = undefined;
       this.#allSources = source as ReadonlySet<ExpressionSource>;
     } else {
       const s = source as ExpressionSource | undefined;
-      this.source = s;
+      this[internal.source] = s;
       this.#allSources = s ? new Set([s]) : EMPTY_SOURCES;
     }
   }
 
   /** all expression sources referenced by this value */
-  get allSources(): ReadonlySet<ExpressionSource> {
+  get [internal.allSources](): ReadonlySet<ExpressionSource> {
     return this.#allSources;
   }
 
@@ -213,17 +215,17 @@ export abstract class Condition {
    * Returns the flat AND terms of this condition. Used by condition
    * simplification to detect absorption (A || A && B → A).
    */
-  getAndTerms(): string[] {
+  [internal.getAndTerms](): string[] {
     return [this.toExpression()];
   }
 
   /** returns the flat AND children of this condition as Condition objects */
-  flattenAnd(): Condition[] {
+  [internal.flattenAnd](): Condition[] {
     return [this];
   }
 
   /** returns the flat OR children of this condition as Condition objects */
-  flattenOr(): Condition[] {
+  [internal.flattenOr](): Condition[] {
     return [this];
   }
 
@@ -247,7 +249,9 @@ export abstract class Condition {
    * given sources. Simplification uses this when it drops a duplicate term
    * whose sources the surviving term doesn't already have.
    */
-  abstract withSources(sources: ReadonlySet<ExpressionSource>): Condition;
+  abstract [internal.withSources](
+    sources: ReadonlySet<ExpressionSource>,
+  ): Condition;
 
   /** render without `${{ }}` wrapping */
   abstract toExpression(): string;
@@ -299,7 +303,7 @@ export class ComparisonCondition extends Condition {
     );
   }
 
-  override withSources(
+  override [internal.withSources](
     sources: ReadonlySet<ExpressionSource>,
   ): ComparisonCondition {
     return new ComparisonCondition(
@@ -335,7 +339,7 @@ export class FunctionCallCondition extends Condition {
     this.#args = args;
   }
 
-  override withSources(
+  override [internal.withSources](
     sources: ReadonlySet<ExpressionSource>,
   ): FunctionCallCondition {
     return new FunctionCallCondition(
@@ -369,28 +373,37 @@ class LogicalCondition extends Condition {
     this.#right = right;
   }
 
-  override getAndTerms(): string[] {
+  override [internal.getAndTerms](): string[] {
     if (this.op === "&&") {
-      return [...this.#left.getAndTerms(), ...this.#right.getAndTerms()];
+      return [
+        ...this.#left[internal.getAndTerms](),
+        ...this.#right[internal.getAndTerms](),
+      ];
     }
     return [this.toExpression()];
   }
 
-  override flattenAnd(): Condition[] {
+  override [internal.flattenAnd](): Condition[] {
     if (this.op === "&&") {
-      return [...this.#left.flattenAnd(), ...this.#right.flattenAnd()];
+      return [
+        ...this.#left[internal.flattenAnd](),
+        ...this.#right[internal.flattenAnd](),
+      ];
     }
     return [this];
   }
 
-  override flattenOr(): Condition[] {
+  override [internal.flattenOr](): Condition[] {
     if (this.op === "||") {
-      return [...this.#left.flattenOr(), ...this.#right.flattenOr()];
+      return [
+        ...this.#left[internal.flattenOr](),
+        ...this.#right[internal.flattenOr](),
+      ];
     }
     return [this];
   }
 
-  override withSources(
+  override [internal.withSources](
     sources: ReadonlySet<ExpressionSource>,
   ): LogicalCondition {
     return new LogicalCondition(
@@ -437,7 +450,9 @@ class NotCondition extends Condition {
     return this.#inner;
   }
 
-  override withSources(sources: ReadonlySet<ExpressionSource>): NotCondition {
+  override [internal.withSources](
+    sources: ReadonlySet<ExpressionSource>,
+  ): NotCondition {
     return new NotCondition(this.#inner, mergeSources(this.sources, sources));
   }
 
@@ -479,7 +494,9 @@ export class RawCondition extends Condition {
     return super.not();
   }
 
-  override withSources(sources: ReadonlySet<ExpressionSource>): RawCondition {
+  override [internal.withSources](
+    sources: ReadonlySet<ExpressionSource>,
+  ): RawCondition {
     return new RawCondition(
       this.#expression,
       mergeSources(this.sources, sources),
@@ -638,16 +655,14 @@ export function formatLiteral(value: string | number | boolean): string {
 
 /** Collects the sources of any number of expression values or conditions. */
 export function sourcesFrom(
-  ...sourceables: ({ source?: ExpressionSource } | Condition)[]
+  ...sourceables: (ExpressionValue | Condition)[]
 ): ReadonlySet<ExpressionSource> {
   const set = new Set<ExpressionSource>();
   for (const v of sourceables) {
     if (v instanceof Condition) {
       for (const s of v.sources) set.add(s);
-    } else if (v instanceof ExpressionValue) {
-      for (const s of v.allSources) set.add(s);
-    } else if (v.source) {
-      set.add(v.source);
+    } else {
+      for (const s of v[internal.allSources]) set.add(s);
     }
   }
   return set;
@@ -767,19 +782,25 @@ function deduplicatedLogical(
   left: Condition,
   right: Condition,
 ): Condition {
-  const leftTerms = op === "&&" ? left.flattenAnd() : left.flattenOr();
-  const rightTerms = op === "&&" ? right.flattenAnd() : right.flattenOr();
+  const leftTerms = op === "&&"
+    ? left[internal.flattenAnd]()
+    : left[internal.flattenOr]();
+  const rightTerms = op === "&&"
+    ? right[internal.flattenAnd]()
+    : right[internal.flattenOr]();
   const seen = new Set(leftTerms.map((t) => t.toExpression()));
   const unique = rightTerms.filter((t) => !seen.has(t.toExpression()));
   // every right term already appears on the left, so the left side is the
   // whole result, but it still has to pick up the right side's sources
-  if (unique.length === 0) return left.withSources(right.sources);
+  if (unique.length === 0) return left[internal.withSources](right.sources);
   const allTerms = [...leftTerms, ...unique];
   // absorption: for &&, drop any OR compound whose child appears as a sibling
   // term (e.g. (A || B) && B → B). Symmetrically for ||.
   const termExprs = new Set(allTerms.map((t) => t.toExpression()));
   const absorbed = allTerms.filter((term) => {
-    const children = op === "&&" ? term.flattenOr() : term.flattenAnd();
+    const children = op === "&&"
+      ? term[internal.flattenOr]()
+      : term[internal.flattenAnd]();
     if (children.length <= 1) return true;
     return !children.some((c) => termExprs.has(c.toExpression()));
   });
@@ -806,7 +827,7 @@ function collectTernarySources(
   for (const { condition, value } of branches) {
     for (const s of condition.sources) set.add(s);
     if (value instanceof ExpressionValue) {
-      for (const s of value.allSources) set.add(s);
+      for (const s of value[internal.allSources]) set.add(s);
     }
   }
   return set;
@@ -893,7 +914,7 @@ export class ThenBuilder {
   else(value: TernaryValue): ExpressionValue {
     const sources = new Set(this.#sources);
     if (value instanceof ExpressionValue) {
-      for (const s of value.allSources) sources.add(s);
+      for (const s of value[internal.allSources]) sources.add(s);
     }
 
     const parts: string[] = [];
@@ -979,7 +1000,7 @@ export function concat(...parts: ConcatPart[]): ExpressionValue {
   const flat: (string | ExpressionValue)[] = [];
   for (const part of parts) {
     if (part instanceof ConcatValue) {
-      flat.push(...part.concatParts);
+      flat.push(...part[internal.concatParts]);
     } else if (part instanceof InlineValue) {
       flat.push(part.toString());
     } else if (typeof part === "number") {
@@ -1011,7 +1032,7 @@ export function concat(...parts: ConcatPart[]): ExpressionValue {
   const sources = new Set<ExpressionSource>();
   for (const part of merged) {
     if (part instanceof ExpressionValue) {
-      for (const s of part.allSources) sources.add(s);
+      for (const s of part[internal.allSources]) sources.add(s);
     }
   }
 
@@ -1048,7 +1069,10 @@ class ConcatValue extends ExpressionValue {
   }
 
   /** the individual parts of this concatenation (for flattening nested concats) */
-  get concatParts(): readonly (string | ExpressionValue)[] {
+  get [internal.concatParts](): readonly (
+    | string
+    | ExpressionValue
+  )[] {
     return this.#parts;
   }
 
@@ -1075,7 +1099,7 @@ export function fromJSON(value: string | ExpressionValue): ExpressionValue {
     return new ExpressionValue(`fromJSON(${formatLiteral(value)})`);
   }
   const sources = new Set<ExpressionSource>();
-  for (const s of value.allSources) sources.add(s);
+  for (const s of value[internal.allSources]) sources.add(s);
   return new ExpressionValue(`fromJSON(${value.expression})`, sources);
 }
 
@@ -1090,7 +1114,7 @@ export function fromJSON(value: string | ExpressionValue): ExpressionValue {
  */
 export function toJSON(value: ExpressionValue): ExpressionValue {
   const sources = new Set<ExpressionSource>();
-  for (const s of value.allSources) sources.add(s);
+  for (const s of value[internal.allSources]) sources.add(s);
   return new ExpressionValue(`toJSON(${value.expression})`, sources);
 }
 
@@ -1107,7 +1131,7 @@ export function hashFiles(
   const args: string[] = [];
   for (const p of patterns) {
     if (p instanceof ExpressionValue) {
-      for (const s of p.allSources) sources.add(s);
+      for (const s of p[internal.allSources]) sources.add(s);
       args.push(p.expression);
     } else {
       args.push(formatLiteral(p));
@@ -1135,7 +1159,7 @@ export function join(
   separator?: string,
 ): ExpressionValue {
   const sources = new Set<ExpressionSource>();
-  for (const s of value.allSources) sources.add(s);
+  for (const s of value[internal.allSources]) sources.add(s);
   const args = separator != null
     ? `${value.expression}, ${formatLiteral(separator)}`
     : value.expression;

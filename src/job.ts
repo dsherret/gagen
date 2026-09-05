@@ -1,3 +1,4 @@
+import * as internal from "./internal.ts";
 import {
   Condition,
   type ExpressionSource,
@@ -187,7 +188,7 @@ function propagatableCondition(
     }
   }
   if (condition instanceof ExpressionValue) {
-    for (const source of condition.allSources) {
+    for (const source of condition[internal.allSources]) {
       if (source instanceof Step) return undefined;
     }
   }
@@ -590,7 +591,7 @@ export class Job implements ExpressionSource {
     return { graph, leafSteps, membership };
   }
 
-  resolveSteps(): Step<string>[] {
+  [internal.resolveSteps](): Step<string>[] {
     const { graph, leafSteps } = this.#buildGraph();
     const priority = computePriorities(graph, leafSteps);
     return topoSort(new Set(graph.keys()), priority, graph);
@@ -678,7 +679,7 @@ export class Job implements ExpressionSource {
    * every job referenced by an expression anywhere in the job's configuration
    * or steps. The result is deduplicated and ordered deterministically.
    */
-  inferNeeds(stepOwners?: Map<Step<string>, Job[]>): Job[] {
+  [internal.inferNeeds](stepOwners?: Map<Step<string>, Job[]>): Job[] {
     const config = this.#config;
     const jobSources = new Set<Job>();
 
@@ -715,7 +716,9 @@ export class Job implements ExpressionSource {
   }
 
   /** Serializes the job to its GitHub Actions YAML object representation. */
-  toYaml(stepOwners?: Map<Step<string>, Job[]>): Record<string, unknown> {
+  [internal.toYaml](
+    stepOwners?: Map<Step<string>, Job[]>,
+  ): Record<string, unknown> {
     const config = this.#config;
     const result: Record<string, unknown> = {};
 
@@ -725,7 +728,7 @@ export class Job implements ExpressionSource {
         : config.name;
     }
 
-    const needs = this.inferNeeds(stepOwners);
+    const needs = this[internal.inferNeeds](stepOwners);
     if (needs.length > 0) {
       result.needs = needs.map((j) => j.id);
     }
@@ -841,7 +844,10 @@ export class Job implements ExpressionSource {
       result.services = services;
     }
 
-    const { steps, outputs } = this.toStepsYaml(`Job "${this.#id}"`, "job");
+    const { steps, outputs } = this[internal.toStepsYaml](
+      `Job "${this.#id}"`,
+      "job",
+    );
     if (outputs != null) {
       result.outputs = outputs;
     }
@@ -857,11 +863,8 @@ export class Job implements ExpressionSource {
    * steps that actually survive condition filtering. `owner` and `ownerNoun`
    * name what the steps belong to in that validation's error message, so a
    * composite action built on this method reports itself rather than a job.
-   *
-   * @internal Only public so that `Action` can reuse it. Not part of the
-   * supported API.
    */
-  toStepsYaml(
+  [internal.toStepsYaml](
     owner: string,
     ownerNoun: string,
   ): { steps: unknown[]; outputs: Record<string, string> | undefined } {
@@ -875,7 +878,8 @@ export class Job implements ExpressionSource {
       const cond = effectiveConditions.get(s);
       return cond == null || !isAlwaysFalse(cond);
     };
-    const serialize = (s: Step<string>) => s.toYaml(effectiveConditions.get(s));
+    const serialize = (s: Step<string>) =>
+      s[internal.toYaml](effectiveConditions.get(s));
 
     const emittedSteps = new Set<Step<string>>();
     const steps: unknown[] = [];
@@ -924,7 +928,7 @@ function assertOutputStepsAreEmitted(
   value: ExpressionValue,
   emittedSteps: Set<Step<string>>,
 ): void {
-  for (const source of value.allSources) {
+  for (const source of value[internal.allSources]) {
     if (source instanceof Step && !emittedSteps.has(source)) {
       throw new Error(
         `${owner} output "${name}" references step "${
@@ -1031,7 +1035,7 @@ function deduplicateConditions(terms: Condition[]): Condition[] {
 
 /** Removes duplicate AND-terms within a single condition: A && B && A → A && B */
 function deduplicateAndTerms(c: Condition): Condition {
-  const children = c.flattenAnd();
+  const children = c[internal.flattenAnd]();
   if (children.length <= 1) return c;
 
   const seen = new Set<string>();
@@ -1072,7 +1076,7 @@ function complementEliminate(terms: Condition[]): Condition[] {
           terms[i] = merged;
           terms.splice(j, 1);
           // re-flatten in case the merged result is an OR
-          const flattened = terms[i].flattenOr();
+          const flattened = terms[i][internal.flattenOr]();
           if (flattened.length > 1) {
             terms.splice(i, 1, ...flattened);
           }
@@ -1094,8 +1098,8 @@ function tryComplementMerge(
   a: Condition,
   b: Condition,
 ): Condition | "tautology" | undefined {
-  const aTerms = new Set(a.getAndTerms());
-  const bTerms = new Set(b.getAndTerms());
+  const aTerms = new Set(a[internal.getAndTerms]());
+  const bTerms = new Set(b[internal.getAndTerms]());
 
   const aOnly: string[] = [];
   const common: string[] = [];
@@ -1114,7 +1118,7 @@ function tryComplementMerge(
   if (common.length === 0) return "tautology";
 
   // reconstruct from a's AND-children, excluding the complementary term
-  const aChildren = a.flattenAnd();
+  const aChildren = a[internal.flattenAnd]();
   const filtered = aChildren.filter((c) => c.toExpression() !== aOnly[0]);
   if (filtered.length === 0) return "tautology";
 
@@ -1148,7 +1152,7 @@ function areComplements(a: string, b: string): boolean {
 function applyAbsorption(terms: Condition[]): Condition[] {
   const termSets = terms.map((c) => ({
     condition: c,
-    terms: new Set(c.getAndTerms()),
+    terms: new Set(c[internal.getAndTerms]()),
   }));
 
   const absorbed = new Set<number>();
@@ -1185,7 +1189,7 @@ function extractCommonFactors(terms: Condition[]): Condition | undefined {
   if (terms.length < 2) return undefined;
 
   // get AND-term string sets for each OR term
-  const termSets = terms.map((t) => new Set(t.getAndTerms()));
+  const termSets = terms.map((t) => new Set(t[internal.getAndTerms]()));
 
   // intersect all sets to find common terms
   const common = new Set(termSets[0]);
@@ -1198,7 +1202,7 @@ function extractCommonFactors(terms: Condition[]): Condition | undefined {
   if (common.size === 0) return undefined;
 
   // get common Condition objects from the first term's children
-  const firstChildren = terms[0].flattenAnd();
+  const firstChildren = terms[0][internal.flattenAnd]();
   const commonConditions = firstChildren.filter((c) =>
     common.has(c.toExpression())
   );
@@ -1206,7 +1210,7 @@ function extractCommonFactors(terms: Condition[]): Condition | undefined {
   // build remainders for each OR term
   const remainders: Condition[] = [];
   for (const term of terms) {
-    const children = term.flattenAnd();
+    const children = term[internal.flattenAnd]();
     const filtered = children.filter((c) => !common.has(c.toExpression()));
     if (filtered.length === 0) {
       // branch is entirely common — whole expression = just common terms
@@ -1450,7 +1454,7 @@ function collectJobSources(value: unknown, out: Set<Job>): void {
   if (value instanceof Job) {
     out.add(value);
   } else if (value instanceof ExpressionValue) {
-    for (const s of value.allSources) {
+    for (const s of value[internal.allSources]) {
       if (s instanceof Job) out.add(s);
     }
   } else if (value instanceof Condition) {
@@ -1559,8 +1563,8 @@ function serializeEnvironment(
  * `${{ }}` string instead of being handed to the YAML serializer as-is.
  */
 function serializeMatrix(matrix: unknown): unknown {
-  if (matrix instanceof Matrix) return matrix.toYaml();
-  return new Matrix(matrix as Record<string, unknown>, []).toYaml();
+  if (matrix instanceof Matrix) return matrix[internal.toYaml]();
+  return new Matrix(matrix as Record<string, unknown>, [])[internal.toYaml]();
 }
 
 /**
