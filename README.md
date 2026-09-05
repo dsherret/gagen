@@ -141,10 +141,10 @@ This requires your scripts to use the `writeOrLint` function.
 Dependabot updates the inline version comment on each `uses:` line of the
 generated YAML (e.g. `actions/checkout@<new-hash> # v7`). The source script
 still reads `v6`, so the next regeneration would revert the bump. Running
-`npx gagen --pull-versions` scans every YAML in `.github/workflows`, collects
-the current version for each action, then rewrites `"owner/repo@<old>"` literals
-in the script files to match. The YAML is already up to date, so no regeneration
-is needed.
+`npx gagen --pull-versions` scans every YAML in `.github/workflows` and a
+composite action's `action.yml` at the repo root, collects the current version
+for each action, then rewrites `"owner/repo@<old>"` literals in the script files
+to match. The YAML is already up to date, so no regeneration is needed.
 
 Limitations:
 

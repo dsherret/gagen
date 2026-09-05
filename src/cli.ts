@@ -60,11 +60,8 @@ export async function runCli() {
 function pullVersions(workflowsDir: string) {
   const entries = fs.readdirSync(workflowsDir);
 
-  const yamlFiles = entries.filter((f) =>
-    f.endsWith(".yml") || f.endsWith(".yaml")
-  );
-  const yamlContents = yamlFiles.map((f) =>
-    fs.readFileSync(resolve(workflowsDir, f), "utf8")
+  const yamlContents = findGeneratedYamlFiles(workflowsDir).map((f) =>
+    fs.readFileSync(f, "utf8")
   );
   const { versions, conflicts } = collectActionVersions(yamlContents);
 
@@ -111,6 +108,23 @@ function pullVersions(workflowsDir: string) {
   }
 }
 
+/**
+ * The YAML files whose pinned versions `--pull-versions` reads: every YAML in
+ * the workflows directory plus a composite action's `action.yml` at the repo
+ * root, since dependabot bumps the pins in both.
+ */
+function findGeneratedYamlFiles(workflowsDir: string): string[] {
+  const files = fs.readdirSync(workflowsDir)
+    .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
+    .map((f) => resolve(workflowsDir, f));
+  const repoRoot = dirname(dirname(workflowsDir));
+  for (const name of ["action.yml", "action.yaml"]) {
+    const candidate = join(repoRoot, name);
+    if (fs.existsSync(candidate)) files.push(candidate);
+  }
+  return files;
+}
+
 function findWorkflowsDir(): string | undefined {
   let dir = resolve(".");
   while (true) {
@@ -137,7 +151,8 @@ Options:
   --update-pins    re-resolve every pinned action instead of reusing the
                    hashes stored in the generated files
   --pull-versions  update the action versions in the scripts to match the
-                   versions in the generated yaml files
+                   versions in the generated yaml files (the workflows and a
+                   root action.yml)
   -h, --help       show this help text`;
 }
 

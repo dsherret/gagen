@@ -857,6 +857,9 @@ export class Job implements ExpressionSource {
    * steps that actually survive condition filtering. `owner` and `ownerNoun`
    * name what the steps belong to in that validation's error message, so a
    * composite action built on this method reports itself rather than a job.
+   *
+   * @internal Only public so that `Action` can reuse it. Not part of the
+   * supported API.
    */
   toStepsYaml(
     owner: string,

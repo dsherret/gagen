@@ -137,6 +137,26 @@ Deno.test("action places the default shell before env and run", () => {
   ]);
 });
 
+Deno.test("action places a default working-directory after the step's own shell", () => {
+  setup();
+  const yaml = action({
+    name: "a",
+    description: "d",
+    defaults: { run: { workingDirectory: "src" } },
+    steps: [
+      step({ name: "Build", shell: "pwsh", env: { CI: "1" }, run: "make" }),
+    ],
+  }).toYamlString();
+  const parsed = parse(yaml) as { runs: { steps: Record<string, unknown>[] } };
+  assertEquals(Object.keys(parsed.runs.steps[0]), [
+    "name",
+    "shell",
+    "working-directory",
+    "env",
+    "run",
+  ]);
+});
+
 Deno.test("action omits optional sections that are not provided", () => {
   setup();
   const yaml = action({

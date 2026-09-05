@@ -246,12 +246,15 @@ function applyRunDefaults(
  * own `shell` and `working-directory` would go — after its identifying keys
  * and before its `env`, `with` and `run` — so the output reads the same as a
  * step that set them itself.
+ *
+ * `shell` counts as a header key so that a default `working-directory` lands
+ * after a shell the step set itself, matching the order `Step.toYaml` uses.
  */
 function insertAfterHeader(
   step: Record<string, unknown>,
   fields: Record<string, unknown>,
 ): Record<string, unknown> {
-  const headerKeys = new Set(["name", "id", "uses", "if"]);
+  const headerKeys = new Set(["name", "id", "uses", "if", "shell"]);
   const result: Record<string, unknown> = {};
   let inserted = false;
   for (const [key, value] of Object.entries(step)) {
