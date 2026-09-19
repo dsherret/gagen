@@ -106,16 +106,16 @@ up to date:
 const lintStep = step({
   name: "Lint CI generation",
   // alternatively, use `npx gagen --lint` to lint all the files
-  // in the `.github/workflows` folder
+  // in the `.github/workflows` and `.github/actions` folders
   run: "./.github/workflows/ci.ts --lint",
 });
 ```
 
 ## CLI
 
-If you store your generation scripts beside your `.yml` files in the
-`.github/workflows` folder, then you can automatically run all these scripts by
-using the `gagen` binary:
+If you store your generation scripts beside your `.yml` files in
+`.github/workflows` or `.github/actions`, then you can automatically run all
+these scripts by using the `gagen` binary:
 
 ```sh
 # generate the output
@@ -137,15 +137,20 @@ npx gagen --help
 
 This requires your scripts to use the `writeOrLint` function.
 
+Both folders are searched recursively, so a script at
+`.github/actions/setup/action.ts` is picked up along with
+`.github/workflows/ci.ts`. You only need one of the two folders to exist.
+
 ### `--pull-versions`
 
 Dependabot updates the inline version comment on each `uses:` line of the
 generated YAML (e.g. `actions/checkout@<new-hash> # v7`). The source script
 still reads `v6`, so the next regeneration would revert the bump. Running
-`npx gagen --pull-versions` scans every YAML in `.github/workflows` and a
-composite action's `action.yml` at the repo root, collects the current version
-for each action, then rewrites `"owner/repo@<old>"` literals in the script files
-to match. The YAML is already up to date, so no regeneration is needed.
+`npx gagen --pull-versions` scans every YAML under `.github/workflows` and
+`.github/actions`, plus a composite action's `action.yml` at the repo root. It
+collects the current version for each action, then rewrites
+the `"owner/repo@<old>"` literals in the scripts of both folders to match. The
+YAML is already up to date, so no regeneration is needed.
 
 Limitations:
 
@@ -659,8 +664,10 @@ action({
 });
 ```
 
-Keeping the script in `.github/workflows` lets the `gagen` CLI find it, but it
-can live anywhere and be run directly.
+Keeping the script in `.github/workflows` or `.github/actions` lets the `gagen`
+CLI find it, but it can live anywhere and be run directly. For a composite
+action the usual spot is `.github/actions/<name>/action.ts`, next to the
+`action.yml` it writes.
 
 ## Artifacts
 
