@@ -1,9 +1,12 @@
 import fs from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 import { collectActionVersions, pullVersionsInSource } from "./pin.ts";
 import { assertKnownFlags } from "./write.ts";
+
+const SCRIPT_EXTENSIONS = [".ts", ".js", ".mts", ".mjs", ".cts", ".cjs"];
+const YAML_EXTENSIONS = [".yml", ".yaml"];
 
 export async function runCli() {
   const args = process.argv.slice(2);
@@ -13,61 +16,46 @@ export async function runCli() {
   }
   assertKnownFlags(args);
 
-  const workflowsDir = findWorkflowsDir();
-  if (workflowsDir == null) {
-    console.error("No .github/workflows directory found.");
+  const workflowsDir = findDir("workflows");
+  const actionsDir = findDir("actions");
+
+  if (!workflowsDir && !actionsDir) {
+    console.error("No .github/workflows or .github/actions directory found.");
     process.exit(1);
   }
 
   if (args.includes("--pull-versions")) {
-    pullVersions(workflowsDir);
+    pullVersions([workflowsDir, actionsDir].filter((dir) => dir !== undefined));
     return;
   }
 
-  const entries = fs.readdirSync(workflowsDir);
+  const workflows = workflowsDir ? findScriptFiles(workflowsDir) : [];
+  const actions = actionsDir ? findScriptFiles(actionsDir) : [];
 
-  const extensions = [".ts", ".js", ".mts", ".mjs", ".cts", ".cjs"];
-  const tsFiles = entries
-    .filter((f) => extensions.some((ext) => f.endsWith(ext)))
-    .sort();
-
-  if (tsFiles.length === 0) {
-    console.error("No script files found in .github/workflows");
+  if (!workflows.length && !actions.length) {
+    console.error(
+      "No script files found in .github/workflows or .github/actions",
+    );
     process.exit(1);
   }
 
-  const isLinting = args.includes("--lint");
-  let ranAny = false;
-  for (const file of tsFiles) {
-    const fullPath = resolve(workflowsDir, file);
-    const content = fs.readFileSync(fullPath, "utf8");
-    if (!content.includes("writeOrLint")) continue;
-    const label = isLinting ? "Linting" : "Generating";
-    const color = isLinting ? "\x1b[36m" : "\x1b[32m";
-    console.error(`${color}${label}\x1b[0m ${file}`);
-    ranAny = true;
-    await import(pathToFileURL(fullPath).href);
-  }
-
-  if (!ranAny) {
+  if (!await writeOrLint([...workflows, ...actions], args)) {
     console.error(
-      "No script files in .github/workflows use writeOrLint — nothing to do.",
+      "No script files in .github/workflows and .github/actions use writeOrLint — nothing to do.",
     );
     process.exit(1);
   }
 }
 
-function pullVersions(workflowsDir: string) {
-  const entries = fs.readdirSync(workflowsDir);
-
-  const yamlContents = findGeneratedYamlFiles(workflowsDir, entries).map((f) =>
+function pullVersions(dirs: string[]) {
+  const yamlContents = findGeneratedYamlFiles(dirs).map((f) =>
     fs.readFileSync(f, "utf8")
   );
   const { versions, conflicts } = collectActionVersions(yamlContents);
 
   for (const [action, refs] of conflicts) {
     console.error(
-      `\x1b[33mwarning\x1b[0m ${action}: conflicting versions ${
+      `\x1b[33mwarning\x1b[0m ${action}: conflicting versions stored in YAML files ${
         refs.join(", ")
       } — skipping`,
     );
@@ -80,14 +68,11 @@ function pullVersions(workflowsDir: string) {
     return;
   }
 
-  const scriptExtensions = [".ts", ".js", ".mts", ".mjs", ".cts", ".cjs"];
-  const scriptFiles = entries
-    .filter((f) => scriptExtensions.some((ext) => f.endsWith(ext)))
-    .sort();
+  const repoRoot = repoRootOf(dirs);
+  const scriptFiles = dirs.flatMap((dir) => findScriptFiles(dir)).sort();
 
   let anyChanges = false;
-  for (const file of scriptFiles) {
-    const fullPath = resolve(workflowsDir, file);
+  for (const fullPath of scriptFiles) {
     const content = fs.readFileSync(fullPath, "utf8");
     const { content: updated, changes } = pullVersionsInSource(
       content,
@@ -98,7 +83,9 @@ function pullVersions(workflowsDir: string) {
     fs.writeFileSync(fullPath, updated);
     for (const change of changes) {
       console.error(
-        `\x1b[32mupdated\x1b[0m ${file}: ${change.action}@${change.from} → ${change.to}`,
+        `\x1b[32mupdated\x1b[0m ${
+          relative(repoRoot, fullPath)
+        }: ${change.action}@${change.from} → ${change.to}`,
       );
     }
   }
@@ -108,19 +95,29 @@ function pullVersions(workflowsDir: string) {
   }
 }
 
-/**
- * The YAML files whose pinned versions `--pull-versions` reads: every YAML in
- * the workflows directory plus a composite action's `action.yml` at the repo
- * root, since dependabot bumps the pins in both.
- */
-function findGeneratedYamlFiles(
-  workflowsDir: string,
-  entries: readonly string[],
-): string[] {
-  const files = entries
-    .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
-    .map((f) => resolve(workflowsDir, f));
-  const repoRoot = dirname(dirname(workflowsDir));
+async function writeOrLint(
+  files: string[],
+  args: string[],
+): Promise<boolean> {
+  const isLinting = args.includes("--lint");
+  let ranAny: boolean = false;
+  for (const file of files.sort()) {
+    const content = fs.readFileSync(file, "utf8");
+    if (!content.includes("writeOrLint")) {
+      continue;
+    }
+    const label = isLinting ? "Linting" : "Generating";
+    const color = isLinting ? "\x1b[36m" : "\x1b[32m";
+    console.error(`${color}${label}\x1b[0m ${file}`);
+    ranAny = true;
+    await import(pathToFileURL(file).href);
+  }
+  return ranAny;
+}
+
+function findGeneratedYamlFiles(dirs: string[]): string[] {
+  const files = dirs.flatMap((dir) => findFiles(dir, YAML_EXTENSIONS));
+  const repoRoot = repoRootOf(dirs);
   for (const name of ["action.yml", "action.yaml"]) {
     const candidate = join(repoRoot, name);
     if (fs.existsSync(candidate)) files.push(candidate);
@@ -128,10 +125,32 @@ function findGeneratedYamlFiles(
   return files;
 }
 
-function findWorkflowsDir(): string | undefined {
+function repoRootOf(dirs: string[]): string {
+  return dirname(dirname(dirs[0]));
+}
+
+function findScriptFiles(dir: string): string[] {
+  return findFiles(dir, SCRIPT_EXTENSIONS);
+}
+
+function findFiles(dir: string, extensions: readonly string[]): string[] {
+  const results: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = resolve(dir, entry.name);
+    const files = entry.isDirectory()
+      ? findFiles(fullPath, extensions)
+      : extensions.some((ext) => entry.name.endsWith(ext))
+      ? [fullPath]
+      : [];
+    results.push(...files);
+  }
+  return results;
+}
+
+function findDir(folderName: string): string | undefined {
   let dir = resolve(".");
   while (true) {
-    const candidate = join(dir, ".github", "workflows");
+    const candidate = join(dir, ".github", folderName);
     if (fs.existsSync(candidate)) return candidate;
     const parent = dirname(dir);
     if (parent === dir) return undefined;
@@ -154,8 +173,9 @@ Options:
   --update-pins    re-resolve every pinned action instead of reusing the
                    hashes stored in the generated files
   --pull-versions  update the action versions in the scripts to match the
-                   versions in the generated yaml files (the workflows and a
-                   root action.yml)
+                   versions in the generated yaml files (the workflows, the
+                   composite actions under .github/actions and a root
+                   action.yml)
   -h, --help       show this help text`;
 }
 
