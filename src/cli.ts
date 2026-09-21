@@ -10,13 +10,10 @@ const YAML_EXTENSIONS = [".yml", ".yaml"];
 
 export async function runCli() {
   const args = process.argv.slice(2);
-
   if (args.includes("--help") || args.includes("-h")) {
     console.log(helpText());
-
     return;
   }
-
   assertKnownFlags(args);
 
   const workflowsDir = findDir("workflows");
@@ -29,7 +26,6 @@ export async function runCli() {
 
   if (args.includes("--pull-versions")) {
     pullVersions([workflowsDir, actionsDir].filter((dir) => dir !== undefined));
-
     return;
   }
 
@@ -40,7 +36,6 @@ export async function runCli() {
     console.error(
       "No script files found in .github/workflows or .github/actions",
     );
-    
     process.exit(1);
   }
 
@@ -48,7 +43,6 @@ export async function runCli() {
     console.error(
       "No script files in .github/workflows and .github/actions use writeOrLint — nothing to do.",
     );
-
     process.exit(1);
   }
 }
@@ -106,26 +100,18 @@ async function writeOrLint(
   args: string[],
 ): Promise<boolean> {
   const isLinting = args.includes("--lint");
-
   let ranAny: boolean = false;
-
   for (const file of files.sort()) {
     const content = fs.readFileSync(file, "utf8");
-
     if (!content.includes("writeOrLint")) {
       continue;
     }
-
     const label = isLinting ? "Linting" : "Generating";
     const color = isLinting ? "\x1b[36m" : "\x1b[32m";
-
     console.error(`${color}${label}\x1b[0m ${file}`);
-
     ranAny = true;
-
     await import(pathToFileURL(file).href);
   }
-
   return ranAny;
 }
 
@@ -149,19 +135,15 @@ function findScriptFiles(dir: string): string[] {
 
 function findFiles(dir: string, extensions: readonly string[]): string[] {
   const results: string[] = [];
-
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const fullPath = resolve(dir, entry.name);
-
     const files = entry.isDirectory()
       ? findFiles(fullPath, extensions)
       : extensions.some((ext) => entry.name.endsWith(ext))
       ? [fullPath]
       : [];
-
     results.push(...files);
   }
-
   return results;
 }
 

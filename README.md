@@ -148,9 +148,9 @@ generated YAML (e.g. `actions/checkout@<new-hash> # v7`). The source script
 still reads `v6`, so the next regeneration would revert the bump. Running
 `npx gagen --pull-versions` scans every YAML under `.github/workflows` and
 `.github/actions`, plus a composite action's `action.yml` at the repo root. It
-collects the current version for each action, then rewrites
-the `"owner/repo@<old>"` literals in the scripts of both folders to match. The
-YAML is already up to date, so no regeneration is needed.
+collects the current version for each action, then rewrites the
+`"owner/repo@<old>"` literals in the scripts of both folders to match. The YAML
+is already up to date, so no regeneration is needed.
 
 Limitations:
 
