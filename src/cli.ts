@@ -20,7 +20,7 @@ export async function runCli() {
   const actionsDir = findDir("actions");
 
   if (!workflowsDir && !actionsDir) {
-    console.error("No .github/workflows directory found.");
+    console.error("No .github/workflows or .github/actions directory found.");
     process.exit(1);
   }
 

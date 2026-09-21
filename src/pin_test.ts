@@ -615,12 +615,15 @@ Deno.test("cli fails when no script uses writeOrLint", async () => {
   }
 });
 
-Deno.test("cli fails when there is no .github/workflows directory", async () => {
+Deno.test("cli fails when there is no .github/workflows or .github/actions directory", async () => {
   const dir = Deno.makeTempDirSync();
   try {
     const { output, exitCode } = await runCliIn(dir, []);
     assertEquals(exitCode, 1);
-    assertStringIncludes(output, "No .github/workflows directory found.");
+    assertStringIncludes(
+      output,
+      "No .github/workflows or .github/actions directory found.",
+    );
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }
