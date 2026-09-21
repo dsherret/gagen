@@ -1,6 +1,6 @@
 import process from "node:process";
 import fs from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { parse } from "@std/yaml/parse";
 import { stringify } from "@std/yaml/stringify";
@@ -676,6 +676,143 @@ Deno.test("cli --pull-versions reports conflicting versions", async () => {
   }
 });
 
+Deno.test("cli generates a composite action in a nested .github/actions folder", async () => {
+  // no .github/workflows folder, so this also checks it isn't required
+  const dir = createTempDir({
+    ".github/actions/setup/action.mjs": generateScript,
+  });
+  try {
+    const { output, exitCode } = await runCliIn(dir, []);
+    assertEquals(exitCode, undefined);
+    assertStringIncludes(output, "Generating");
+    assertStringIncludes(output, join("setup", "action.mjs"));
+    const generated = fs.readFileSync(
+      join(dir, ".github/actions/setup/ci.generated.yml"),
+      "utf8",
+    );
+    assertStringIncludes(generated, "run: echo hi");
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli generates from both .github/workflows and .github/actions", async () => {
+  const dir = createTempDir({
+    ".github/workflows/ci.mjs": generateScript,
+    ".github/workflows/nested/release.mjs": generateScript,
+    ".github/actions/setup/action.mjs": generateScript,
+  });
+  try {
+    const { exitCode } = await runCliIn(dir, []);
+    assertEquals(exitCode, undefined);
+    for (
+      const path of [
+        ".github/workflows/ci.generated.yml",
+        ".github/workflows/nested/ci.generated.yml",
+        ".github/actions/setup/ci.generated.yml",
+      ]
+    ) {
+      assertEquals(fs.existsSync(join(dir, path)), true, path);
+    }
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli fails when neither folder contains a script", async () => {
+  const dir = createTempDir({
+    ".github/workflows/ci.generated.yml": "name: ci\n",
+    ".github/actions/setup/action.yml": "name: setup\n",
+  });
+  try {
+    const { output, exitCode } = await runCliIn(dir, []);
+    assertEquals(exitCode, 1);
+    assertStringIncludes(
+      output,
+      "No script files found in .github/workflows or .github/actions",
+    );
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli --pull-versions reads and updates files in .github/actions", async () => {
+  const script = `const checkout = "actions/checkout@v6";\nwriteOrLint;\n`;
+  const dir = createTempDir({
+    ".github/actions/setup/action.ts": script,
+    ".github/actions/setup/action.yml":
+      `runs:\n  steps:\n    - uses: actions/checkout@${HASH} # v7\n`,
+  });
+  try {
+    const { output, exitCode } = await runCliIn(dir, ["--pull-versions"]);
+    assertEquals(exitCode, undefined);
+    // reported relative to the repo root rather than the folder it's in
+    assertStringIncludes(
+      output,
+      `${
+        join(".github", "actions", "setup", "action.ts")
+      }: actions/checkout@v6`,
+    );
+    assertEquals(
+      fs.readFileSync(join(dir, ".github/actions/setup/action.ts"), "utf8"),
+      script.replace("@v6", "@v7"),
+    );
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli --pull-versions applies versions across both folders", async () => {
+  const script = `const checkout = "actions/checkout@v6";\nwriteOrLint;\n`;
+  // the version is only in the workflow yaml, but the action script is
+  // updated too
+  const dir = createTempDir({
+    ".github/workflows/ci.ts": script,
+    ".github/workflows/ci.generated.yml":
+      `      - uses: actions/checkout@${HASH} # v7\n`,
+    ".github/actions/setup/action.ts": script,
+  });
+  try {
+    const { exitCode } = await runCliIn(dir, ["--pull-versions"]);
+    assertEquals(exitCode, undefined);
+    for (
+      const path of [
+        ".github/workflows/ci.ts",
+        ".github/actions/setup/action.ts",
+      ]
+    ) {
+      assertEquals(
+        fs.readFileSync(join(dir, path), "utf8"),
+        script.replace("@v6", "@v7"),
+        path,
+      );
+    }
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli --pull-versions reports conflicts between the two folders", async () => {
+  const script = `const checkout = "actions/checkout@v6";\nwriteOrLint;\n`;
+  const dir = createTempDir({
+    ".github/workflows/ci.ts": script,
+    ".github/workflows/ci.generated.yml":
+      `      - uses: actions/checkout@${HASH} # v7\n`,
+    ".github/actions/setup/action.yml":
+      `    - uses: actions/checkout@${OTHER_HASH} # v8\n`,
+  });
+  try {
+    const { output } = await runCliIn(dir, ["--pull-versions"]);
+    assertStringIncludes(output, "conflicting versions");
+    assertEquals(
+      fs.readFileSync(join(dir, ".github/workflows/ci.ts"), "utf8"),
+      script,
+    );
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
 // --- helpers ---
 
 function roundTrip(original: string): string {
@@ -712,6 +849,17 @@ function createWorkflowsDir(
     join(workflowsDir, options?.fileName ?? "ci.ts"),
     options?.script ?? `const checkout = "actions/checkout@v6";\n`,
   );
+  return dir;
+}
+
+/** Creates a temp directory containing the given files, keyed by relative path. */
+function createTempDir(files: Record<string, string>): string {
+  const dir = Deno.makeTempDirSync();
+  for (const [path, content] of Object.entries(files)) {
+    const fullPath = join(dir, path);
+    fs.mkdirSync(dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content);
+  }
   return dir;
 }
 
