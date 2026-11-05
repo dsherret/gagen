@@ -1,14 +1,40 @@
 import fs from "node:fs";
 import process from "node:process";
 import { parse } from "@std/yaml/parse";
-import { parsePinComments, pinParsedYaml, pinYamlContent } from "./pin.ts";
-import type { PinEntry, RefResolver } from "./pin.ts";
+import {
+  narrowYamlContent,
+  parseLockfilePins,
+  parsePinComments,
+  pinParsedYaml,
+  pinYamlContent,
+} from "./pin.ts";
+import type { PinEntry, RefNarrower, RefResolver } from "./pin.ts";
 
 /** Options shared by the `writeOrLint` methods of workflows and actions. */
 export interface WriteOrLintOptions {
   filePath: URL;
   header?: string;
-  pinDeps?: boolean | { resolve: RefResolver };
+  /**
+   * How to pin the `uses:` references in the output.
+   *
+   * - `true` (default) pins them to commit hashes.
+   * - `false` leaves them as written.
+   * - `"lockfile"` (experimental) is for use with a GitHub Actions workflow
+   *   lockfile (`.github/workflows/actions.lock`), which pins each reference
+   *   to a commit itself. Partial versions (ex. `v6`) are narrowed to the full
+   *   version tag at the same commit (ex. `v6.0.1`) instead of a hash, the same
+   *   as `gh actions-lock` does, so it leaves the output as-is. Reusable
+   *   workflows from other repositories, which the lockfile does not cover, are
+   *   still pinned to commit hashes.
+   * - `{ resolve }` pins to commit hashes with a custom resolver.
+   * - `{ narrow, resolve }` is lockfile mode with a custom narrower and,
+   *   optionally, a custom resolver for the reusable workflows.
+   */
+  pinDeps?:
+    | boolean
+    | "lockfile"
+    | { resolve: RefResolver }
+    | { narrow: RefNarrower; resolve?: RefResolver };
 }
 
 /**
@@ -16,25 +42,25 @@ export interface WriteOrLintOptions {
  * against the file already there and exits non-zero when they differ.
  *
  * With `pinDeps` (the default), `uses:` references are pinned to commit hashes
- * on write, reusing the hashes recorded in the existing file unless
- * `--update-pins` is passed.
+ * (or full version tags in lockfile mode) on write, reusing the pins recorded
+ * in the existing file unless `--update-pins` is passed.
  */
 export function writeOrLintYaml(
   expected: string,
   options: WriteOrLintOptions,
 ): void {
   assertKnownFlags();
-  const pinDeps = options.pinDeps ?? true;
+  const pinning = getPinning(options.pinDeps);
 
   if (isLintingNow()) {
     const existing = readForLint(options.filePath);
     let parsedExisting: unknown;
     let parsedExpected: unknown;
 
-    if (pinDeps) {
+    if (pinning != null) {
       // compare in the pinned direction: a ref always maps to one hash,
       // while a hash may have been written by more than one ref
-      const pins = parsePinComments(existing);
+      const pins = parsePins(existing, pinning);
       parsedExisting = parse(existing);
       parsedExpected = pinParsedYaml(parse(expected), pins);
     } else {
@@ -52,9 +78,8 @@ export function writeOrLintYaml(
     }
   } else {
     let output = expected;
-    if (pinDeps) {
-      const resolve = typeof pinDeps === "object" ? pinDeps.resolve : undefined;
-      // reuse previously resolved hashes from existing file to avoid
+    if (pinning != null) {
+      // reuse previously resolved pins from existing file to avoid
       // redundant git ls-remote calls on subsequent runs
       let cache: PinEntry[] | undefined;
       if (!isUpdatingPinsNow()) {
@@ -62,12 +87,19 @@ export function writeOrLintYaml(
           const existing = fs.readFileSync(options.filePath, {
             encoding: "utf8",
           });
-          cache = parsePinComments(existing);
+          cache = parsePins(existing, pinning);
         } catch {
           // file doesn't exist yet
         }
       }
-      const result = pinYamlContent(expected, resolve, cache);
+      const result = pinning.kind === "hash"
+        ? pinYamlContent(expected, pinning.resolve, cache)
+        : narrowYamlContent(
+          expected,
+          pinning.narrow,
+          cache,
+          pinning.resolve,
+        );
       output = result.content;
     }
     fs.writeFileSync(options.filePath, output);
@@ -150,4 +182,36 @@ function readForLint(filePath: URL): string {
 function isNotFound(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   return (err as { code?: unknown }).code === "ENOENT";
+}
+
+/** How `writeOrLint` pins the output, resolved from the `pinDeps` option. */
+type Pinning =
+  | { kind: "hash"; resolve: RefResolver | undefined }
+  | {
+    kind: "tag";
+    narrow: RefNarrower | undefined;
+    resolve: RefResolver | undefined;
+  };
+
+function getPinning(
+  pinDeps: WriteOrLintOptions["pinDeps"],
+): Pinning | undefined {
+  if (pinDeps == null || pinDeps === true) {
+    return { kind: "hash", resolve: undefined };
+  } else if (pinDeps === false) {
+    return undefined;
+  } else if (pinDeps === "lockfile") {
+    return { kind: "tag", narrow: undefined, resolve: undefined };
+  } else if ("narrow" in pinDeps) {
+    return { kind: "tag", narrow: pinDeps.narrow, resolve: pinDeps.resolve };
+  } else {
+    return { kind: "hash", resolve: pinDeps.resolve };
+  }
+}
+
+/** Reads the pins recorded in a file written with the given pinning. */
+function parsePins(content: string, pinning: Pinning): PinEntry[] {
+  return pinning.kind === "hash"
+    ? parsePinComments(content)
+    : parseLockfilePins(content);
 }
