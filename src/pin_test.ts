@@ -7,8 +7,12 @@ import { stringify } from "@std/yaml/stringify";
 import {
   collectActionVersions,
   isCommitHash,
+  narrowYamlContent,
   parseActionUses,
+  parseLockfilePins,
   parsePinComments,
+  parseTagCommits,
+  pickNarrowedTag,
   type PinEntry,
   pinParsedYaml,
   pinYamlContent,
@@ -116,7 +120,7 @@ Deno.test("pinYamlContent keeps the quotes around a quoted uses value", () => {
     content,
     `jobs:\n  build:\n    steps:\n      - uses: 'owner/repo@${HASH}' # v1\n`,
   );
-  assertEquals(pins, [{ original: "owner/repo@v1", hash: HASH }]);
+  assertEquals(pins, [{ original: "owner/repo@v1", pinned: HASH }]);
   // the comment must land outside the quotes so the value still parses
   assertEquals(
     parse(content),
@@ -137,7 +141,7 @@ Deno.test("pinYamlContent pins a job level reusable workflow uses", () => {
   );
   assertEquals(pins, [{
     original: "owner/repo/.github/workflows/release.yml@v2",
-    hash: HASH,
+    pinned: HASH,
   }]);
 });
 
@@ -167,8 +171,8 @@ Deno.test("pinYamlContent resolves each distinct ref of the same action", () => 
   assertStringIncludes(content, `owner/repo@${HASH} # v1`);
   assertStringIncludes(content, `owner/repo@${OTHER_HASH} # v2`);
   assertEquals(pins, [
-    { original: "owner/repo@v1", hash: HASH },
-    { original: "owner/repo@v2", hash: OTHER_HASH },
+    { original: "owner/repo@v1", pinned: HASH },
+    { original: "owner/repo@v2", pinned: OTHER_HASH },
   ]);
 });
 
@@ -176,10 +180,10 @@ Deno.test("pinYamlContent ignores a stale cache entry for another ref", () => {
   const original = stringify({
     jobs: { build: { steps: [{ uses: "actions/checkout@v7" }] } },
   });
-  const cache: PinEntry[] = [{ original: "actions/checkout@v6", hash: HASH }];
+  const cache: PinEntry[] = [{ original: "actions/checkout@v6", pinned: HASH }];
   const { content, pins } = pinYamlContent(original, () => OTHER_HASH, cache);
   assertStringIncludes(content, `actions/checkout@${OTHER_HASH} # v7`);
-  assertEquals(pins, [{ original: "actions/checkout@v7", hash: OTHER_HASH }]);
+  assertEquals(pins, [{ original: "actions/checkout@v7", pinned: OTHER_HASH }]);
 });
 
 Deno.test("pinYamlContent leaves an unresolvable pinned hash untouched", () => {
@@ -225,7 +229,7 @@ Deno.test("pinYamlContent keeps crlf line endings intact", () => {
   // and the reader still finds the pin in what the writer produced
   assertEquals(parsePinComments(content), [{
     original: "actions/checkout@v6",
-    hash: HASH,
+    pinned: HASH,
   }]);
 });
 
@@ -288,8 +292,8 @@ Deno.test("pinParsedYaml pins every ref, including two that share a hash", () =>
   // function of the ref, so both sides still line up, whereas unpinning has
   // to guess and gets one of them wrong.
   const pins: PinEntry[] = [
-    { original: "owner/repo@v1", hash: HASH },
-    { original: "owner/repo@v1.0.0", hash: HASH },
+    { original: "owner/repo@v1", pinned: HASH },
+    { original: "owner/repo@v1.0.0", pinned: HASH },
   ];
   const expected = {
     jobs: {
@@ -316,7 +320,7 @@ Deno.test("pinParsedYaml pins every ref, including two that share a hash", () =>
 });
 
 Deno.test("pinParsedYaml reaches uses values at any depth", () => {
-  const pins: PinEntry[] = [{ original: "actions/checkout@v6", hash: HASH }];
+  const pins: PinEntry[] = [{ original: "actions/checkout@v6", pinned: HASH }];
   const obj = {
     jobs: {
       release: { uses: "actions/checkout@v6" },
@@ -345,12 +349,12 @@ Deno.test("pinParsedYaml reaches uses values at any depth", () => {
 
 Deno.test("pinParsedYaml leaves refs it has no pin for alone", () => {
   const obj = { jobs: { build: { steps: [{ uses: "actions/checkout@v7" }] } } };
-  pinParsedYaml(obj, [{ original: "actions/checkout@v6", hash: HASH }]);
+  pinParsedYaml(obj, [{ original: "actions/checkout@v6", pinned: HASH }]);
   assertEquals(obj.jobs.build.steps[0].uses, "actions/checkout@v7");
 });
 
 Deno.test("pinParsedYaml tolerates empty pins and non-object input", () => {
-  const pins: PinEntry[] = [{ original: "actions/checkout@v6", hash: HASH }];
+  const pins: PinEntry[] = [{ original: "actions/checkout@v6", pinned: HASH }];
   assertEquals(pinParsedYaml(undefined, pins), undefined);
   assertEquals(pinParsedYaml("text", pins), "text");
   const obj = { jobs: { a: null, b: { steps: [null, "text"] } } };
@@ -362,12 +366,12 @@ Deno.test("unpinParsedYaml leaves hashes it has no pin for alone", () => {
   const obj = {
     jobs: { build: { steps: [{ uses: `actions/checkout@${OTHER_HASH}` }] } },
   };
-  unpinParsedYaml(obj, [{ original: "actions/checkout@v6", hash: HASH }]);
+  unpinParsedYaml(obj, [{ original: "actions/checkout@v6", pinned: HASH }]);
   assertEquals(obj.jobs.build.steps[0].uses, `actions/checkout@${OTHER_HASH}`);
 });
 
 Deno.test("unpinParsedYaml tolerates non-object jobs and steps", () => {
-  const pins: PinEntry[] = [{ original: "actions/checkout@v6", hash: HASH }];
+  const pins: PinEntry[] = [{ original: "actions/checkout@v6", pinned: HASH }];
   assertEquals(unpinParsedYaml(undefined, pins), undefined);
   assertEquals(unpinParsedYaml("text", pins), "text");
   const obj = { jobs: { a: null, b: { steps: [null, "text"] } } };
@@ -390,23 +394,260 @@ Deno.test("parsePinComments reads a quoted pinned value", () => {
   const content = `      - uses: 'owner/repo@${HASH}' # v1\n`;
   assertEquals(parsePinComments(content), [{
     original: "owner/repo@v1",
-    hash: HASH,
+    pinned: HASH,
   }]);
+});
+
+// --- narrowing ---
+
+Deno.test("parseTagCommits uses the peeled commit of an annotated tag", () => {
+  const output = [
+    `${"1".repeat(40)}\trefs/tags/v1`,
+    `${"2".repeat(40)}\trefs/tags/v1.0.0`,
+    `${"3".repeat(40)}\trefs/tags/v1.0.0^{}`,
+    "",
+  ].join("\n");
+  assertEquals([...parseTagCommits(output)], [
+    ["v1", "1".repeat(40)],
+    ["v1.0.0", "3".repeat(40)],
+  ]);
+});
+
+Deno.test("pickNarrowedTag picks the highest full version in the family at the commit", () => {
+  const tagCommits = new Map([
+    ["v6", HASH],
+    ["v6.0.0", HASH],
+    ["v6.0.1", HASH],
+    ["v6.1.0", OTHER_HASH],
+    ["v7.0.0", HASH],
+    ["v6.0.2-beta", HASH],
+  ]);
+  assertEquals(pickNarrowedTag("v6", HASH, tagCommits), "v6.0.1");
+  assertEquals(pickNarrowedTag("v6.0", HASH, tagCommits), "v6.0.1");
+  assertEquals(pickNarrowedTag("v6.1", HASH, tagCommits), undefined);
+  assertEquals(pickNarrowedTag("v6.1", OTHER_HASH, tagCommits), "v6.1.0");
+});
+
+Deno.test("pickNarrowedTag compares versions numerically and prefers a v prefix", () => {
+  const tagCommits = new Map([
+    ["1.10.0", HASH],
+    ["v1.9.0", HASH],
+    ["v1.10.0", HASH],
+  ]);
+  assertEquals(pickNarrowedTag("v1", HASH, tagCommits), "v1.10.0");
+});
+
+Deno.test("pickNarrowedTag does not narrow full versions or other refs", () => {
+  const tagCommits = new Map([["v6.0.1", HASH]]);
+  assertEquals(pickNarrowedTag("v6.0.1", HASH, tagCommits), undefined);
+  assertEquals(pickNarrowedTag("main", HASH, tagCommits), undefined);
+  assertEquals(pickNarrowedTag("v6.0.1-rc.1", HASH, new Map()), undefined);
+});
+
+Deno.test("pickNarrowedTag narrows a suffixed version like gh actions-lock", () => {
+  const tagCommits = new Map([
+    ["v2.0.0-rc.1", HASH],
+    ["v2.0.0", HASH],
+    ["v2.1.0", HASH],
+    ["v4.2.1", OTHER_HASH],
+  ]);
+  assertEquals(pickNarrowedTag("v2.0.0-rc.1", HASH, tagCommits), "v2.0.0");
+  // a missing minor counts as 0 when there is a suffix
+  assertEquals(pickNarrowedTag("v2-beta", HASH, tagCommits), "v2.0.0");
+  assertEquals(pickNarrowedTag("v4.2.x", OTHER_HASH, tagCommits), "v4.2.1");
+});
+
+Deno.test("narrowYamlContent narrows partial versions and leaves other refs", () => {
+  const yaml = `jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4.2
+      - uses: denoland/setup-deno@v2.0.3
+      - uses: owner/repo@main
+      - uses: owner/pinned@${HASH}
+      - uses: ./local/action
+      - uses: $/.github/actions/setup
+`;
+  const calls: string[] = [];
+  const { content, pins } = narrowYamlContent(yaml, (owner, repo, ref) => {
+    calls.push(`${owner}/${repo}@${ref}`);
+    return ref === "v6" ? "v6.0.1" : "v4.2.5";
+  });
+  assertEquals(calls, ["actions/checkout@v6", "actions/setup-node@v4.2"]);
+  assertEquals(
+    content,
+    `jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v6.0.1 # v6
+      - uses: actions/setup-node@v4.2.5 # v4.2
+      - uses: denoland/setup-deno@v2.0.3
+      - uses: owner/repo@main
+      - uses: owner/pinned@${HASH}
+      - uses: ./local/action
+      - uses: $/.github/actions/setup
+`,
+  );
+  assertEquals(pins, [
+    { original: "actions/checkout@v6", pinned: "v6.0.1" },
+    { original: "actions/setup-node@v4.2", pinned: "v4.2.5" },
+  ]);
+});
+
+Deno.test("narrowYamlContent pins a reusable workflow to a hash", () => {
+  // the lockfile doesn't lock reusable workflows from other repositories
+  const yaml = `jobs:
+  call:
+    uses: owner/repo/.github/workflows/release.yml@v1
+  pinned:
+    uses: owner/repo/.github/workflows/release.yml@${OTHER_HASH}
+`;
+  const { content, pins } = narrowYamlContent(
+    yaml,
+    failingResolver(),
+    undefined,
+    () => HASH,
+  );
+  assertEquals(
+    content,
+    `jobs:
+  call:
+    uses: owner/repo/.github/workflows/release.yml@${HASH} # v1
+  pinned:
+    uses: owner/repo/.github/workflows/release.yml@${OTHER_HASH}
+`,
+  );
+  assertEquals(parseLockfilePins(content), pins);
+});
+
+Deno.test("parseLockfilePins leaves out the hashes of actions", () => {
+  const content = `      - uses: actions/checkout@${HASH} # v6
+      - uses: actions/setup-node@v4.2.0 # v4
+    uses: owner/repo/.github/workflows/release.yml@${OTHER_HASH} # v1
+`;
+  assertEquals(parseLockfilePins(content), [
+    { original: "actions/setup-node@v4", pinned: "v4.2.0" },
+    {
+      original: "owner/repo/.github/workflows/release.yml@v1",
+      pinned: OTHER_HASH,
+    },
+  ]);
+});
+
+Deno.test("narrowYamlContent leaves a ref the narrower has no tag for", () => {
+  const yaml = `      - uses: owner/repo@v1\n      - uses: owner/repo@v1\n`;
+  let calls = 0;
+  const { content, pins } = narrowYamlContent(yaml, () => {
+    calls++;
+    return undefined;
+  });
+  assertEquals(content, yaml);
+  assertEquals(pins, []);
+  // the result is remembered for the rest of the file
+  assertEquals(calls, 1);
+});
+
+Deno.test("narrowYamlContent reuses the cache instead of narrowing", () => {
+  const yaml = `      - uses: actions/checkout@v6\n`;
+  const { content } = narrowYamlContent(
+    yaml,
+    failingResolver(),
+    [{ original: "actions/checkout@v6", pinned: "v6.0.1" }],
+  );
+  assertEquals(content, `      - uses: actions/checkout@v6.0.1 # v6\n`);
+});
+
+Deno.test("narrowYamlContent output round-trips through parsePinComments", () => {
+  const { content, pins } = narrowYamlContent(
+    `      - uses: actions/checkout@v6\r\n      - uses: 'owner/repo@v1'\r\n`,
+    (_owner, _repo, ref) => `${ref}.2.3`,
+  );
+  assertEquals(
+    content,
+    `      - uses: actions/checkout@v6.2.3 # v6\r\n      - uses: 'owner/repo@v1.2.3' # v1\r\n`,
+  );
+  assertEquals(parsePinComments(content, "tag"), pins);
+});
+
+Deno.test("parsePinComments reads only the pins of the requested kind", () => {
+  const content = `      - uses: actions/checkout@${HASH} # v6
+      - uses: actions/setup-node@v4.2.0 # v4
+      - uses: owner/repo@v1.0.0 # some other comment
+`;
+  assertEquals(parsePinComments(content, "hash"), [
+    { original: "actions/checkout@v6", pinned: HASH },
+  ]);
+  assertEquals(parsePinComments(content, "tag"), [
+    { original: "actions/setup-node@v4", pinned: "v4.2.0" },
+  ]);
+});
+
+Deno.test("parsePinComments reads a tag bumped out of its comment's family", () => {
+  assertEquals(
+    parsePinComments(`      - uses: actions/checkout@v7.0.0 # v6\n`, "tag"),
+    [{ original: "actions/checkout@v7", pinned: "v7.0.0" }],
+  );
+  // keeps the comment's prefix
+  assertEquals(
+    parsePinComments(`      - uses: owner/repo@7.0.0 # v6.1\n`, "tag"),
+    [{ original: "owner/repo@v7.0", pinned: "7.0.0" }],
+  );
+  // the precision of a suffixed comment is unclear, so it's not a pin
+  assertEquals(
+    parsePinComments(`      - uses: owner/repo@v7.0.0 # v6-beta\n`, "tag"),
+    [],
+  );
 });
 
 // --- collectActionVersions ---
 
-Deno.test("collectActionVersions ignores unpinned and local uses", () => {
+Deno.test("collectActionVersions reads only unpinned full versions", () => {
+  // unpinned partial versions and branches may be in a workflow that wasn't
+  // generated, so they are ignored to not conflict with the generated ones
   const yaml = `jobs:
   build:
     steps:
       - uses: ./local/action
+      - uses: $/.github/actions/setup
       - uses: actions/checkout@v6
+      - uses: owner/branch@main
+      - uses: owner/full@v1.2.3
       - uses: denoland/setup-deno@${HASH} # v2
+      - uses: owner/no-comment@${HASH}
 `;
   const { versions, conflicts } = collectActionVersions([yaml]);
-  assertEquals([...versions], [["denoland/setup-deno", "v2"]]);
+  assertEquals([...versions], [
+    ["owner/full", "v1.2.3"],
+    ["denoland/setup-deno", "v2"],
+  ]);
   assertEquals(conflicts.size, 0);
+});
+
+Deno.test("collectActionVersions reads the original ref of a narrowed tag", () => {
+  const yaml = `      - uses: actions/checkout@v6.0.1 # v6
+      - uses: actions/setup-node@v4.2.0 # v4.2
+      - uses: denoland/setup-deno@v2.0.3
+`;
+  const { versions, conflicts } = collectActionVersions([yaml]);
+  assertEquals([...versions], [
+    ["actions/checkout", "v6"],
+    ["actions/setup-node", "v4.2"],
+    ["denoland/setup-deno", "v2.0.3"],
+  ]);
+  assertEquals(conflicts.size, 0);
+});
+
+Deno.test("collectActionVersions reads a tag bumped out of its comment's family", () => {
+  // ex. dependabot bumped `v6.0.1 # v6` without touching the comment
+  const yaml = `      - uses: actions/checkout@v7.0.0 # v6
+      - uses: actions/setup-node@v5.1.0 # v4.2
+`;
+  const { versions } = collectActionVersions([yaml]);
+  assertEquals([...versions], [
+    ["actions/checkout", "v7"],
+    ["actions/setup-node", "v5.1"],
+  ]);
 });
 
 // --- pullVersionsInSource ---
@@ -493,6 +734,159 @@ Deno.test("writeOrLint --lint fails when the generated file is out of date", asy
     );
     assertEquals(exitCode, 1);
     assertStringIncludes(output, "is out of date");
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+// --- writeOrLint's lockfile mode ---
+
+Deno.test("writeOrLint lockfile mode writes narrowed tags and lints them", async () => {
+  const wf = lockfileWorkflow("actions/checkout@v6");
+  const { dir, filePath } = tempFilePath();
+  try {
+    wf.writeOrLint({ filePath, pinDeps: { narrow: () => "v6.0.1" } });
+    const written = fs.readFileSync(filePath, "utf8");
+    assertStringIncludes(written, "uses: actions/checkout@v6.0.1 # v6\n");
+
+    // regenerating reuses the narrowed tag from the file
+    wf.writeOrLint({ filePath, pinDeps: { narrow: failingResolver() } });
+    assertEquals(fs.readFileSync(filePath, "utf8"), written);
+
+    const { exitCode } = await captureRun(
+      ["--lint"],
+      () => wf.writeOrLint({ filePath, pinDeps: "lockfile" }),
+    );
+    assertEquals(exitCode, undefined);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint lockfile mode --lint fails when the version changed", async () => {
+  const { dir, filePath } = tempFilePath();
+  try {
+    lockfileWorkflow("actions/checkout@v6").writeOrLint({
+      filePath,
+      pinDeps: { narrow: () => "v6.0.1" },
+    });
+    const { output, exitCode } = await captureRun(
+      ["--lint"],
+      () =>
+        lockfileWorkflow("actions/checkout@v7").writeOrLint({
+          filePath,
+          pinDeps: "lockfile",
+        }),
+    );
+    assertEquals(exitCode, 1);
+    assertStringIncludes(output, "is out of date");
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint lockfile mode does not reuse commit hash pins", async () => {
+  // switching an existing workflow from hash pinning to lockfile mode
+  const wf = lockfileWorkflow("actions/checkout@v6");
+  const { dir, filePath } = tempFilePath();
+  try {
+    wf.writeOrLint({ filePath, pinDeps: { resolve: () => HASH } });
+
+    const { exitCode } = await captureRun(
+      ["--lint"],
+      () => wf.writeOrLint({ filePath, pinDeps: "lockfile" }),
+    );
+    assertEquals(exitCode, 1);
+
+    wf.writeOrLint({ filePath, pinDeps: { narrow: () => "v6.0.1" } });
+    assertStringIncludes(
+      fs.readFileSync(filePath, "utf8"),
+      "uses: actions/checkout@v6.0.1 # v6\n",
+    );
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint hash mode does not reuse narrowed tags", async () => {
+  // switching an existing workflow from lockfile mode back to hash pinning
+  const wf = lockfileWorkflow("actions/checkout@v6");
+  const { dir, filePath } = tempFilePath();
+  try {
+    wf.writeOrLint({ filePath, pinDeps: { narrow: () => "v6.0.1" } });
+
+    const { exitCode } = await captureRun(
+      ["--lint"],
+      () => wf.writeOrLint({ filePath }),
+    );
+    assertEquals(exitCode, 1);
+
+    wf.writeOrLint({ filePath, pinDeps: { resolve: () => HASH } });
+    assertStringIncludes(
+      fs.readFileSync(filePath, "utf8"),
+      `uses: actions/checkout@${HASH} # v6\n`,
+    );
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint lockfile mode keeps a reusable workflow's hash", async () => {
+  const wf = workflow({
+    name: "ci",
+    on: {},
+    jobs: [
+      { id: "call", uses: "owner/repo/.github/workflows/release.yml@v1" },
+      {
+        id: "build",
+        runsOn: "ubuntu-latest",
+        steps: [step({ uses: "actions/checkout@v6" })],
+      },
+    ],
+  });
+  const { dir, filePath } = tempFilePath();
+  try {
+    wf.writeOrLint({
+      filePath,
+      pinDeps: { narrow: () => "v6.0.1", resolve: () => HASH },
+    });
+    const written = fs.readFileSync(filePath, "utf8");
+    assertStringIncludes(
+      written,
+      `uses: owner/repo/.github/workflows/release.yml@${HASH} # v1\n`,
+    );
+    assertStringIncludes(written, "uses: actions/checkout@v6.0.1 # v6\n");
+
+    // regenerating and linting reuse both pins from the file
+    const failing = failingResolver();
+    wf.writeOrLint({
+      filePath,
+      pinDeps: { narrow: failing, resolve: failing },
+    });
+    assertEquals(fs.readFileSync(filePath, "utf8"), written);
+    const { exitCode } = await captureRun(
+      ["--lint"],
+      () => wf.writeOrLint({ filePath, pinDeps: "lockfile" }),
+    );
+    assertEquals(exitCode, undefined);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint lockfile mode --update-pins narrows again", async () => {
+  const wf = lockfileWorkflow("actions/checkout@v6");
+  const { dir, filePath } = tempFilePath();
+  try {
+    wf.writeOrLint({ filePath, pinDeps: { narrow: () => "v6.0.1" } });
+    await captureRun(
+      ["--update-pins"],
+      () => wf.writeOrLint({ filePath, pinDeps: { narrow: () => "v6.0.2" } }),
+    );
+    assertStringIncludes(
+      fs.readFileSync(filePath, "utf8"),
+      "uses: actions/checkout@v6.0.2 # v6\n",
+    );
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }
@@ -642,6 +1036,61 @@ Deno.test("cli --pull-versions updates the scripts from the generated yaml", asy
     const { output, exitCode } = await runCliIn(dir, ["--pull-versions"]);
     assertEquals(exitCode, undefined);
     assertStringIncludes(output, "actions/checkout@v6");
+    assertEquals(
+      fs.readFileSync(join(workflowsDir, "ci.ts"), "utf8"),
+      `const checkout = "actions/checkout@v7";\nwriteOrLint;\n`,
+    );
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli --pull-versions reads versions written in lockfile mode", async () => {
+  const dir = createWorkflowsDir({
+    script: `const checkout = "actions/checkout@v6";
+const node = "actions/setup-node@v4.1.0";
+writeOrLint;
+`,
+  });
+  const workflowsDir = join(dir, ".github/workflows");
+  fs.writeFileSync(
+    join(workflowsDir, "ci.generated.yml"),
+    `      - uses: actions/checkout@v7.0.0 # v6
+      - uses: actions/setup-node@v4.2.0
+`,
+  );
+  try {
+    const { exitCode } = await runCliIn(dir, ["--pull-versions"]);
+    assertEquals(exitCode, undefined);
+    assertEquals(
+      fs.readFileSync(join(workflowsDir, "ci.ts"), "utf8"),
+      `const checkout = "actions/checkout@v7";
+const node = "actions/setup-node@v4.2.0";
+writeOrLint;
+`,
+    );
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli --pull-versions ignores a hand-written workflow's partial versions", async () => {
+  const dir = createWorkflowsDir({
+    script: `const checkout = "actions/checkout@v6";\nwriteOrLint;\n`,
+  });
+  const workflowsDir = join(dir, ".github/workflows");
+  fs.writeFileSync(
+    join(workflowsDir, "ci.generated.yml"),
+    `      - uses: actions/checkout@${HASH} # v7\n`,
+  );
+  fs.writeFileSync(
+    join(workflowsDir, "release.yml"),
+    `      - uses: actions/checkout@v4\n`,
+  );
+  try {
+    const { output, exitCode } = await runCliIn(dir, ["--pull-versions"]);
+    assertEquals(exitCode, undefined);
+    assertEquals(output.includes("conflicting versions"), false);
     assertEquals(
       fs.readFileSync(join(workflowsDir, "ci.ts"), "utf8"),
       `const checkout = "actions/checkout@v7";\nwriteOrLint;\n`,
@@ -819,6 +1268,18 @@ function roundTrip(original: string): string {
   const { content } = pinYamlContent(original, () => HASH);
   const unpinned = unpinParsedYaml(parse(content), parsePinComments(content));
   return stringify(unpinned as Record<string, unknown>);
+}
+
+function lockfileWorkflow(uses: string) {
+  return workflow({
+    name: "ci",
+    on: {},
+    jobs: [{
+      id: "build",
+      runsOn: "ubuntu-latest",
+      steps: [step({ uses })],
+    }],
+  });
 }
 
 function failingResolver(): RefResolver {

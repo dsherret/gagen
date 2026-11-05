@@ -63,7 +63,7 @@ function pullVersions(dirs: string[]) {
 
   if (versions.size === 0) {
     if (conflicts.size === 0) {
-      console.error("No pinned versions found in generated YAML files.");
+      console.error("No action versions found in generated YAML files.");
     }
     return;
   }
@@ -171,7 +171,8 @@ Options:
   --lint           verify the generated files are up to date instead of
                    writing them, exiting non-zero when they are not
   --update-pins    re-resolve every pinned action instead of reusing the
-                   hashes stored in the generated files
+                   hashes (or version tags in lockfile mode) stored in the
+                   generated files
   --pull-versions  update the action versions in the scripts to match the
                    versions in the generated yaml files (the workflows, the
                    composite actions under .github/actions and a root
