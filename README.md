@@ -187,7 +187,7 @@ dependencies.
 To force re-resolving all pins, run with the `--update-pins` flag:
 
 ```sh
-./ci.ts --update-pins
+npx gagen --update-pins
 ```
 
 Pinning can be disabled by setting `pinDeps` to `false`:
