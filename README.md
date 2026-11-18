@@ -152,12 +152,6 @@ collects the current version for each action, then rewrites the
 `"owner/repo@<old>"` literals in the scripts of both folders to match. The YAML
 is already up to date, so no regeneration is needed.
 
-Only `uses:` lines with a version comment are read, which are the ones gagen
-pinned (e.g. `@<hash> # v6`, or `@v6.0.1 # v6` in
-[lockfile mode](#workflow-lockfiles-experimental)). Lines without one (e.g.
-`@v6.0.2` or `@main`) are ignored, since they may be in hand-written workflows
-next to the generated ones.
-
 Limitations:
 
 - Only literal `"owner/repo@ref"` strings (double or single quoted) are
