@@ -228,20 +228,13 @@ To use a
 wf.writeOrLint({ filePath, pinDeps: "lockfile" });
 ```
 
-Partial versions are then narrowed to the full version tag at the same commit,
-the same as [`gh actions-lock`](https://github.com/github/gh-actions-lock) does:
-
-```yaml
-steps:
-  - uses: actions/checkout@v6.0.1 # v6
-```
-
 Reusable workflows from other repositories are still pinned to a hash because
 the lockfile doesn't cover them.
 
-Run `gh actions-lock` once to create the lockfile. After that, `npx gagen` runs
-`gh actions-lock` to update it and `npx gagen --lint` runs
-`gh actions-lock --verify` (or warns if `gh` or the extension isn't installed).
+Run [`gh actions-lock`](https://github.com/github/gh-actions-lock) once to
+create the lockfile. After that, `npx gagen` runs `gh actions-lock` to update it
+and `npx gagen --lint` runs `gh actions-lock --verify` (or warns if `gh` or the
+extension isn't installed).
 
 Notes:
 
