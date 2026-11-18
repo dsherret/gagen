@@ -57,20 +57,28 @@ export async function runCli(runCommand: CommandRunner = runCommandSync) {
     process.exit(1);
   }
 
-  if (args.includes("--lint") && workflowsDir) {
-    verifyLockfile(workflowsDir, runCommand);
+  if (workflowsDir) {
+    runActionsLock(workflowsDir, args.includes("--lint"), runCommand);
   }
 }
 
 /**
- * Verifies the workflow lockfile (`.github/workflows/actions.lock`), when
- * there is one, with `gh actions-lock --verify`. This is skipped with a
- * warning when the gh cli or its actions-lock extension isn't installed.
+ * Updates the workflow lockfile (`.github/workflows/actions.lock`), when
+ * there is one, with `gh actions-lock`, or verifies it with
+ * `gh actions-lock --verify` when linting. This is skipped with a warning
+ * when the gh cli or its actions-lock extension isn't installed.
  */
-function verifyLockfile(workflowsDir: string, runCommand: CommandRunner) {
+function runActionsLock(
+  workflowsDir: string,
+  isLinting: boolean,
+  runCommand: CommandRunner,
+) {
   if (!fs.existsSync(join(workflowsDir, "actions.lock"))) return;
   const repoRoot = dirname(dirname(workflowsDir));
   const lockfileName = ".github/workflows/actions.lock";
+  const ghArgs = isLinting ? ["actions-lock", "--verify"] : ["actions-lock"];
+  const ghCommand = `gh ${ghArgs.join(" ")}`;
+  const action = isLinting ? "verifying" : "updating";
 
   const extensions = runCommand("gh", ["extension", "list"], {
     cwd: repoRoot,
@@ -78,27 +86,31 @@ function verifyLockfile(workflowsDir: string, runCommand: CommandRunner) {
   });
   if (extensions == null) {
     warn(
-      `not verifying ${lockfileName} because the gh cli is not installed. Install it from https://cli.github.com, then run \`gh extension install github/gh-actions-lock\`.`,
+      `not ${action} ${lockfileName} because the gh cli is not installed. Install it from https://cli.github.com, then run \`gh extension install github/gh-actions-lock\`.`,
     );
     return;
   }
   if (!hasActionsLockExtension(extensions.stdout)) {
     warn(
-      `not verifying ${lockfileName} because the gh actions-lock extension is not installed. Install it with \`gh extension install github/gh-actions-lock\`.`,
+      `not ${action} ${lockfileName} because the gh actions-lock extension is not installed. Install it with \`gh extension install github/gh-actions-lock\`.`,
     );
     return;
   }
 
+  const label = isLinting ? "Verifying" : "Updating";
+  const color = isLinting ? "\x1b[36m" : "\x1b[32m";
   console.error(
-    `\x1b[36mVerifying\x1b[0m ${lockfileName} by running \`gh actions-lock --verify\``,
+    `${color}${label}\x1b[0m ${lockfileName} by running \`${ghCommand}\``,
   );
-  const result = runCommand("gh", ["actions-lock", "--verify"], {
+  const result = runCommand("gh", ghArgs, {
     cwd: repoRoot,
     captureOutput: false,
   });
   if (result == null || result.status !== 0) {
     console.error(
-      `Error: \`gh actions-lock --verify\` failed for ${lockfileName}. Run \`gh actions-lock\` to update it.`,
+      isLinting
+        ? `Error: \`${ghCommand}\` failed for ${lockfileName}. Run without --lint to update it.`
+        : `Error: \`${ghCommand}\` failed to update ${lockfileName}.`,
     );
     process.exit(1);
   }
@@ -261,7 +273,8 @@ Options:
   --lint           verify the generated files are up to date instead of
                    writing them, exiting non-zero when they are not. When
                    there is a .github/workflows/actions.lock lockfile, this
-                   also runs \`gh actions-lock --verify\`
+                   also runs \`gh actions-lock --verify\` (and without
+                   --lint, \`gh actions-lock\` to update it)
   --update-pins    re-resolve every pinned action instead of reusing the
                    hashes (or version tags in lockfile mode) stored in the
                    generated files

@@ -1193,7 +1193,7 @@ Deno.test("cli --pull-versions ignores a hand-written workflow's partial version
 
 Deno.test("cli --lint runs gh actions-lock --verify when there is a lockfile", async () => {
   const dir = createLockfileRepo();
-  const gh = fakeGh({ verifyStatus: 0 });
+  const gh = fakeGh({ status: 0 });
   try {
     const { output, exitCode } = await runCliIn(dir, ["--lint"], gh.run);
     assertEquals(exitCode, undefined);
@@ -1215,7 +1215,7 @@ Deno.test("cli --lint runs gh actions-lock --verify when there is a lockfile", a
 
 Deno.test("cli --lint fails when gh actions-lock --verify fails", async () => {
   const dir = createLockfileRepo();
-  const gh = fakeGh({ verifyStatus: 1 });
+  const gh = fakeGh({ status: 1 });
   try {
     const { output, exitCode } = await runCliIn(dir, ["--lint"], gh.run);
     assertEquals(exitCode, 1);
@@ -1246,7 +1246,7 @@ Deno.test("cli --lint warns when gh is not installed", async () => {
 Deno.test("cli --lint warns when the gh actions-lock extension is not installed", async () => {
   const dir = createLockfileRepo();
   const gh = fakeGh({
-    verifyStatus: 0,
+    status: 0,
     extensions: "gh stack\tgithub/gh-stack\tv0.1.1\n",
   });
   try {
@@ -1262,24 +1262,50 @@ Deno.test("cli --lint warns when the gh actions-lock extension is not installed"
   }
 });
 
-Deno.test("cli only runs gh actions-lock --verify when linting a lockfile", async () => {
-  const gh = fakeGh({ verifyStatus: 0 });
-  const withLockfile = createLockfileRepo();
-  const withoutLockfile = createLockfileRepo();
-  fs.rmSync(join(withoutLockfile, ".github/workflows/actions.lock"));
+Deno.test("cli runs gh actions-lock after generating when there is a lockfile", async () => {
+  const dir = createLockfileRepo();
+  const gh = fakeGh({ status: 0 });
   try {
-    assertEquals(
-      (await runCliIn(withLockfile, [], gh.run)).exitCode,
-      undefined,
+    const { output, exitCode } = await runCliIn(dir, [], gh.run);
+    assertEquals(exitCode, undefined);
+    assertStringIncludes(
+      output,
+      "Updating\x1b[0m .github/workflows/actions.lock by running `gh actions-lock`",
     );
-    assertEquals(
-      (await runCliIn(withoutLockfile, ["--lint"], gh.run)).exitCode,
-      undefined,
+    assertEquals(gh.calls.map((call) => call.args), [
+      ["extension", "list"],
+      ["actions-lock"],
+    ]);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli fails when gh actions-lock fails after generating", async () => {
+  const dir = createLockfileRepo();
+  const gh = fakeGh({ status: 1 });
+  try {
+    const { output, exitCode } = await runCliIn(dir, [], gh.run);
+    assertEquals(exitCode, 1);
+    assertStringIncludes(
+      output,
+      "`gh actions-lock` failed to update .github/workflows/actions.lock",
     );
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli does not run gh actions-lock without a lockfile", async () => {
+  const gh = fakeGh({ status: 0 });
+  const dir = createLockfileRepo();
+  fs.rmSync(join(dir, ".github/workflows/actions.lock"));
+  try {
+    assertEquals((await runCliIn(dir, [], gh.run)).exitCode, undefined);
+    assertEquals((await runCliIn(dir, ["--lint"], gh.run)).exitCode, undefined);
     assertEquals(gh.calls, []);
   } finally {
-    Deno.removeSync(withLockfile, { recursive: true });
-    Deno.removeSync(withoutLockfile, { recursive: true });
+    Deno.removeSync(dir, { recursive: true });
   }
 });
 
@@ -1508,7 +1534,7 @@ function createLockfileRepo(): string {
 }
 
 /** Creates a command runner standing in for an installed `gh`. */
-function fakeGh(options: { verifyStatus: number; extensions?: string }) {
+function fakeGh(options: { status: number; extensions?: string }) {
   const calls: { args: readonly string[]; cwd: string }[] = [];
   const run: CommandRunner = (command, args, { cwd }) => {
     assertEquals(command, "gh");
@@ -1520,7 +1546,7 @@ function fakeGh(options: { verifyStatus: number; extensions?: string }) {
           "gh actions-lock\tgithub/gh-actions-lock\tv0.4.1\n",
       };
     }
-    return { status: options.verifyStatus, stdout: "" };
+    return { status: options.status, stdout: "" };
   };
   return { calls, run };
 }

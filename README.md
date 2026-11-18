@@ -239,14 +239,8 @@ steps:
 Reusable workflows from other repositories are still pinned to a hash because
 the lockfile doesn't cover them.
 
-Update the lockfile after generating:
-
-```sh
-npx gagen
-gh actions-lock
-```
-
-When the lockfile exists, `npx gagen --lint` also runs
+Run `gh actions-lock` once to create the lockfile. After that, `npx gagen` runs
+`gh actions-lock` to update it and `npx gagen --lint` runs
 `gh actions-lock --verify` (or warns if `gh` or the extension isn't installed).
 
 Notes:
