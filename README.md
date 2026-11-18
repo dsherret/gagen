@@ -633,13 +633,13 @@ workflow({
 
 ## Typed workflow inputs
 
-`defineWorkflowDispatchInputs()` and `defineWorkflowCallInputs()` give you typed
-access to the inputs of a `workflow_dispatch` or `workflow_call` trigger:
+`workflow.defineDispatchInputs()` and `workflow.defineCallInputs()` give you
+typed access to the inputs of a `workflow_dispatch` or `workflow_call` trigger:
 
 ```ts
-import { defineWorkflowDispatchInputs, step, workflow } from "gagen";
+import { step, workflow } from "gagen";
 
-const inputs = defineWorkflowDispatchInputs({
+const inputs = workflow.defineDispatchInputs({
   environment: { type: "choice", options: ["staging", "production"] },
 });
 
@@ -656,7 +656,7 @@ workflow({
 ```
 
 A plain object of input definitions works too. For composite actions, use
-[`defineInputs()`](#composite-actions).
+[`action.defineInputs()`](#composite-actions).
 
 ## Composite actions
 
@@ -667,9 +667,9 @@ propagation work the same as in a job, and `uses:` references get pinned.
 
 ```ts
 // .github/workflows/action.ts
-import { action, defineInputs, step } from "gagen";
+import { action, step } from "gagen";
 
-const inputs = defineInputs({
+const inputs = action.defineInputs({
   version: { description: "Version to install", default: "latest" },
   cache: { description: "Cache downloads", default: "false" },
 });

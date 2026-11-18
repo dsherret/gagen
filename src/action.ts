@@ -82,22 +82,6 @@ export class ActionInputs<_K extends string> {
 }
 
 /**
- * Defines the inputs of a composite action, returning them with a typed
- * property per input holding that input's `inputs.<name>` expression.
- *
- * For the inputs of a workflow, use `defineWorkflowDispatchInputs` or
- * `defineWorkflowCallInputs` instead.
- */
-export function defineInputs<const T extends Record<string, ActionInputDef>>(
-  defs: T,
-): WithInputExprs<ActionInputs<keyof T & string>, keyof T & string> {
-  return new ActionInputs(defs) as WithInputExprs<
-    ActionInputs<keyof T & string>,
-    keyof T & string
-  >;
-}
-
-/**
  * A resolved composite action. Prefer the `action()` free function over
  * constructing this directly.
  */
@@ -187,21 +171,44 @@ export class Action {
   }
 }
 
-/** Creates a composite action from the given configuration. */
-export function action(config: ActionConfig): Action {
-  return new Action(config);
+/** Creates a composite action, with helpers for defining its parts. */
+export interface ActionFunction {
+  /** Creates a composite action from the given configuration. */
+  (config: ActionConfig): Action;
+  /**
+   * Defines the inputs of a composite action, returning them with a typed
+   * property per input holding that input's `inputs.<name>` expression.
+   */
+  defineInputs<const T extends Record<string, ActionInputDef>>(
+    defs: T,
+  ): WithInputExprs<ActionInputs<keyof T & string>, keyof T & string>;
 }
 
-/** Fails for inputs that were not defined with `defineInputs`. */
+/** Creates a composite action from the given configuration. */
+export const action: ActionFunction = Object.assign(
+  (config: ActionConfig): Action => new Action(config),
+  { defineInputs: defineActionInputs },
+);
+
+function defineActionInputs<const T extends Record<string, ActionInputDef>>(
+  defs: T,
+): WithInputExprs<ActionInputs<keyof T & string>, keyof T & string> {
+  return new ActionInputs(defs) as WithInputExprs<
+    ActionInputs<keyof T & string>,
+    keyof T & string
+  >;
+}
+
+/** Fails for inputs that were not defined with `action.defineInputs`. */
 function assertActionInputs(inputs: unknown) {
   if (inputs instanceof ActionInputs) return;
   const received = inputs instanceof WorkflowDispatchInputs
     ? "workflow_dispatch inputs"
     : inputs instanceof WorkflowCallInputs
     ? "workflow_call inputs"
-    : "inputs that were not defined with defineInputs()";
+    : "inputs that were not defined with action.defineInputs()";
   throw new Error(
-    `The inputs of a composite action received ${received}. Use defineInputs().`,
+    `The inputs of a composite action received ${received}. Use action.defineInputs().`,
   );
 }
 

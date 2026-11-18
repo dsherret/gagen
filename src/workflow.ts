@@ -13,6 +13,9 @@ import { type ConfigValue, serializeConfigValues, type Step } from "./step.ts";
 import { type WriteOrLintOptions, writeOrLintYaml } from "./write.ts";
 import { ActionInputs } from "./action.ts";
 import {
+  defineWorkflowCallInputs,
+  defineWorkflowDispatchInputs,
+  type WithInputExprs,
   type WorkflowCallInput,
   WorkflowCallInputs,
   type WorkflowDispatchInput,
@@ -35,7 +38,7 @@ export interface WorkflowCallSecret {
 /** The `workflow_dispatch` trigger, which lets a workflow be run manually. */
 export interface WorkflowDispatchTrigger {
   /**
-   * The inputs, either from `defineWorkflowDispatchInputs` or as a plain
+   * The inputs, either from `workflow.defineDispatchInputs` or as a plain
    * object of input definitions.
    */
   inputs?:
@@ -46,7 +49,7 @@ export interface WorkflowDispatchTrigger {
 /** The `workflow_call` trigger, which makes a workflow reusable. */
 export interface WorkflowCallTrigger {
   /**
-   * The inputs, either from `defineWorkflowCallInputs` or as a plain object
+   * The inputs, either from `workflow.defineCallInputs` or as a plain object
    * of input definitions.
    */
   inputs?: WorkflowCallInputs<string> | Record<string, WorkflowCallInput>;
@@ -226,10 +229,35 @@ export class Workflow {
   }
 }
 
-/** Creates a workflow from the given configuration. */
-export function workflow(config: WorkflowConfig): Workflow {
-  return new Workflow(config);
+/** Creates a workflow, with helpers for defining its parts. */
+export interface WorkflowFunction {
+  /** Creates a workflow from the given configuration. */
+  (config: WorkflowConfig): Workflow;
+  /**
+   * Defines the inputs of a `workflow_dispatch` trigger, returning them with
+   * a typed property per input holding that input's `inputs.<name>`
+   * expression.
+   */
+  defineDispatchInputs<const T extends Record<string, WorkflowDispatchInput>>(
+    defs: T,
+  ): WithInputExprs<WorkflowDispatchInputs<keyof T & string>, keyof T & string>;
+  /**
+   * Defines the inputs of a `workflow_call` trigger, returning them with a
+   * typed property per input holding that input's `inputs.<name>` expression.
+   */
+  defineCallInputs<const T extends Record<string, WorkflowCallInput>>(
+    defs: T,
+  ): WithInputExprs<WorkflowCallInputs<keyof T & string>, keyof T & string>;
 }
+
+/** Creates a workflow from the given configuration. */
+export const workflow: WorkflowFunction = Object.assign(
+  (config: WorkflowConfig): Workflow => new Workflow(config),
+  {
+    defineDispatchInputs: defineWorkflowDispatchInputs,
+    defineCallInputs: defineWorkflowCallInputs,
+  },
+);
 
 // --- trigger serialization ---
 
@@ -286,8 +314,8 @@ function serializeTriggerObject(
 
 /** The function that defines the inputs of each trigger that has them. */
 const INPUTS_HELPERS: Record<string, string> = {
-  workflow_dispatch: "defineWorkflowDispatchInputs()",
-  workflow_call: "defineWorkflowCallInputs()",
+  workflow_dispatch: "workflow.defineDispatchInputs()",
+  workflow_call: "workflow.defineCallInputs()",
 };
 
 /**

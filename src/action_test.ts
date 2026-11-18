@@ -11,7 +11,7 @@ function setup() {
 
 Deno.test("action serializes metadata, inputs, outputs and composite steps", () => {
   setup();
-  const inputs = defineInputs({
+  const inputs = action.defineInputs({
     "dprint-version": {
       description: "Specific dprint version to use",
       default: "",
@@ -177,7 +177,7 @@ Deno.test("action omits optional sections that are not provided", () => {
 
 Deno.test("action resolves step dependencies and propagates conditions", () => {
   setup();
-  const inputs = defineInputs({
+  const inputs = action.defineInputs({
     cache: { description: "Cache", default: "false" },
   });
   const prepare = step({ name: "Prepare cache", run: "echo prepare" });
@@ -252,8 +252,8 @@ Deno.test("action rejects an output referencing a step that is not emitted", () 
   );
 });
 
-Deno.test("defineInputs exposes typed input expressions", () => {
-  const inputs = defineInputs({
+Deno.test("action.defineInputs exposes typed input expressions", () => {
+  const inputs = action.defineInputs({
     "config-path": { description: "Config" },
   });
   assertEquals(inputs["config-path"].expression, "inputs.config-path");
@@ -264,9 +264,21 @@ Deno.test("defineInputs exposes typed input expressions", () => {
   );
 });
 
-Deno.test("defineInputs rejects an input that shadows a member", () => {
+Deno.test("deprecated defineInputs still defines action inputs", () => {
+  const inputs = defineInputs({ version: { description: "Version" } });
+  assertEquals(inputs.version.expression, "inputs.version");
+  const yaml = action({
+    name: "a",
+    description: "d",
+    inputs,
+    steps: [step({ run: `install ${inputs.version}`, shell: "bash" })],
+  }).toYamlString();
+  assertStringIncludes(yaml, "inputs:\n  version:\n    description: Version\n");
+});
+
+Deno.test("action.defineInputs rejects an input that shadows a member", () => {
   assertThrows(
-    () => defineInputs({ constructor: { description: "x" } }),
+    () => action.defineInputs({ constructor: { description: "x" } }),
     Error,
     'Input "constructor" conflicts with a member of ActionInputs',
   );
@@ -315,7 +327,7 @@ Deno.test("action writeOrLint pins uses references and lints the result", () => 
 
 Deno.test("action serializes expressions in env and run", () => {
   setup();
-  const inputs = defineInputs({
+  const inputs = action.defineInputs({
     args: { description: "Args", default: "" },
   });
   const yaml = action({

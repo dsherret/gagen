@@ -68,10 +68,7 @@ export type WithInputExprs<Inputs, K extends string> =
   & Inputs
   & { readonly [P in K]: ExpressionValue };
 
-/**
- * Defines the inputs of a `workflow_dispatch` trigger, returning them with a
- * typed property per input holding that input's `inputs.<name>` expression.
- */
+/** The implementation of `workflow.defineDispatchInputs`. */
 export function defineWorkflowDispatchInputs<
   const T extends Record<string, WorkflowDispatchInput>,
 >(
@@ -83,10 +80,7 @@ export function defineWorkflowDispatchInputs<
   >;
 }
 
-/**
- * Defines the inputs of a `workflow_call` trigger, returning them with a typed
- * property per input holding that input's `inputs.<name>` expression.
- */
+/** The implementation of `workflow.defineCallInputs`. */
 export function defineWorkflowCallInputs<
   const T extends Record<string, WorkflowCallInput>,
 >(

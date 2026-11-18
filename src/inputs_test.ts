@@ -1,17 +1,10 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import {
-  action,
-  defineInputs,
-  defineWorkflowCallInputs,
-  defineWorkflowDispatchInputs,
-  step,
-  workflow,
-} from "./mod.ts";
+import { action, step, workflow } from "./mod.ts";
 import { resetStepCounter } from "./step.ts";
 
-Deno.test("defineWorkflowDispatchInputs serializes the inputs and exposes their expressions", () => {
+Deno.test("workflow.defineDispatchInputs serializes the inputs and exposes their expressions", () => {
   resetStepCounter();
-  const inputs = defineWorkflowDispatchInputs({
+  const inputs = workflow.defineDispatchInputs({
     countries: {
       description: "Pipe-separated country codes",
       required: false,
@@ -70,9 +63,9 @@ jobs:
   );
 });
 
-Deno.test("defineWorkflowCallInputs serializes the inputs and exposes their expressions", () => {
+Deno.test("workflow.defineCallInputs serializes the inputs and exposes their expressions", () => {
   resetStepCounter();
-  const inputs = defineWorkflowCallInputs({
+  const inputs = workflow.defineCallInputs({
     version: { type: "string", required: true },
     dry: { type: "boolean", default: false },
   });
@@ -109,11 +102,11 @@ jobs:
 });
 
 Deno.test("workflow triggers reject inputs defined for something else", () => {
-  const actionInputs = defineInputs({ name: { description: "Name" } });
-  const dispatchInputs = defineWorkflowDispatchInputs({
+  const actionInputs = action.defineInputs({ name: { description: "Name" } });
+  const dispatchInputs = workflow.defineDispatchInputs({
     name: { type: "string" },
   });
-  const callInputs = defineWorkflowCallInputs({ name: { type: "string" } });
+  const callInputs = workflow.defineCallInputs({ name: { type: "string" } });
   const toYaml = (on: Parameters<typeof workflow>[0]["on"]) =>
     workflow({ name: "ci", on, jobs: [] }).toYamlString();
 
@@ -121,13 +114,13 @@ Deno.test("workflow triggers reject inputs defined for something else", () => {
     // @ts-expect-error composite action inputs are not workflow inputs
     () => toYaml({ workflow_dispatch: { inputs: actionInputs } }),
     Error,
-    "on.workflow_dispatch.inputs received composite action inputs. Use defineWorkflowDispatchInputs() or pass a plain input definition object.",
+    "on.workflow_dispatch.inputs received composite action inputs. Use workflow.defineDispatchInputs() or pass a plain input definition object.",
   );
   assertThrows(
     // @ts-expect-error composite action inputs are not workflow inputs
     () => toYaml({ workflow_call: { inputs: actionInputs } }),
     Error,
-    "on.workflow_call.inputs received composite action inputs. Use defineWorkflowCallInputs() or pass a plain input definition object.",
+    "on.workflow_call.inputs received composite action inputs. Use workflow.defineCallInputs() or pass a plain input definition object.",
   );
   assertThrows(
     // @ts-expect-error workflow_dispatch inputs are not workflow_call inputs
@@ -144,7 +137,7 @@ Deno.test("workflow triggers reject inputs defined for something else", () => {
 });
 
 Deno.test("action rejects the inputs of a workflow trigger", () => {
-  const inputs = defineWorkflowDispatchInputs({ name: { type: "string" } });
+  const inputs = workflow.defineDispatchInputs({ name: { type: "string" } });
   assertThrows(
     () =>
       action({
@@ -155,18 +148,18 @@ Deno.test("action rejects the inputs of a workflow trigger", () => {
         steps: [step({ run: "x" })],
       }).toYamlString(),
     Error,
-    "The inputs of a composite action received workflow_dispatch inputs. Use defineInputs().",
+    "The inputs of a composite action received workflow_dispatch inputs. Use action.defineInputs().",
   );
 });
 
 Deno.test("workflow input helpers reject an input that shadows a member", () => {
   assertThrows(
-    () => defineWorkflowDispatchInputs({ constructor: { type: "string" } }),
+    () => workflow.defineDispatchInputs({ constructor: { type: "string" } }),
     Error,
     'Input "constructor" conflicts with a member of WorkflowDispatchInputs',
   );
   assertThrows(
-    () => defineWorkflowCallInputs({ constructor: { type: "string" } }),
+    () => workflow.defineCallInputs({ constructor: { type: "string" } }),
     Error,
     'Input "constructor" conflicts with a member of WorkflowCallInputs',
   );
