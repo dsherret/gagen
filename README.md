@@ -65,8 +65,6 @@ Generate via the `gagen` cli:
 
 ```sh
 npx gagen
-# or alternatively run the script directly
-deno run -A .github/workflows/ci.ts
 ```
 
 This generates a `ci.generated.yml` with steps in the correct order and figures
