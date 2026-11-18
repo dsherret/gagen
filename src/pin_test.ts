@@ -20,7 +20,7 @@ import {
   type RefResolver,
   unpinParsedYaml,
 } from "./pin.ts";
-import { runCli } from "./cli.ts";
+import { type CommandRunner, runCli } from "./cli.ts";
 import { step, workflow } from "./mod.ts";
 
 const HASH = "a".repeat(40);
@@ -444,6 +444,54 @@ Deno.test("pickNarrowedTag does not narrow full versions or other refs", () => {
   assertEquals(pickNarrowedTag("v6.0.1-rc.1", HASH, new Map()), undefined);
 });
 
+Deno.test("pickNarrowedTag treats leading zeros like gh actions-lock", () => {
+  // the major and minor tags are formatted without leading zeros, so a version
+  // written with them counts as a full version even without a patch number
+  const tagCommits = new Map([
+    ["v2024", HASH],
+    ["v2024.01", HASH],
+    ["v2024.1.0", OTHER_HASH],
+  ]);
+  assertEquals(pickNarrowedTag("v2024", HASH, tagCommits), "v2024.01");
+  assertEquals(pickNarrowedTag("v06", HASH, tagCommits), undefined);
+  assertEquals(pickNarrowedTag("v2024.01", HASH, tagCommits), undefined);
+  // the same version written two ways goes to the tag that sorts last
+  assertEquals(
+    pickNarrowedTag(
+      "v1",
+      HASH,
+      new Map([["v1.01.0", HASH], ["v1.1.0", HASH], ["v1.1.00", HASH]]),
+    ),
+    "v1.1.00",
+  );
+});
+
+Deno.test("pickNarrowedTag parses versions like gh actions-lock", () => {
+  const tagCommits = new Map([
+    ["v1.0.3", HASH],
+    ["v1.1.0", HASH],
+    ["v1.2.5", HASH],
+    ["6.0.1", HASH],
+    ["7.0.1", HASH],
+    ["v7.0.1", HASH],
+  ]);
+  // only three numbers are read, so the fourth is a suffix
+  assertEquals(pickNarrowedTag("v1.2.3.4", HASH, tagCommits), "v1.2.5");
+  // `.x` is a suffix, so the missing minor counts as 0
+  assertEquals(pickNarrowedTag("v1.x", HASH, tagCommits), "v1.0.3");
+  // the prefix of the ref doesn't matter, but a `v` prefixed tag wins a tie
+  assertEquals(pickNarrowedTag("6", HASH, tagCommits), "6.0.1");
+  assertEquals(pickNarrowedTag("v6", HASH, tagCommits), "6.0.1");
+  assertEquals(pickNarrowedTag("7", HASH, tagCommits), "v7.0.1");
+  // full commit hashes are not versions, even when they are only digits
+  assertEquals(pickNarrowedTag("1".repeat(40), HASH, tagCommits), undefined);
+  assertEquals(pickNarrowedTag("1".repeat(64), HASH, tagCommits), undefined);
+  assertEquals(
+    pickNarrowedTag("1", HASH, new Map([["1".repeat(39), HASH]])),
+    undefined,
+  );
+});
+
 Deno.test("pickNarrowedTag narrows a suffixed version like gh actions-lock", () => {
   const tagCommits = new Map([
     ["v2.0.0-rc.1", HASH],
@@ -521,10 +569,11 @@ Deno.test("narrowYamlContent pins a reusable workflow to a hash", () => {
   assertEquals(parseLockfilePins(content), pins);
 });
 
-Deno.test("parseLockfilePins leaves out the hashes of actions", () => {
+Deno.test("parseLockfilePins leaves out the hashes of actions and tags of reusable workflows", () => {
   const content = `      - uses: actions/checkout@${HASH} # v6
       - uses: actions/setup-node@v4.2.0 # v4
     uses: owner/repo/.github/workflows/release.yml@${OTHER_HASH} # v1
+    uses: owner/repo/.github/workflows/other.yml@v2.0.0 # v2
 `;
   assertEquals(parseLockfilePins(content), [
     { original: "actions/setup-node@v4", pinned: "v4.2.0" },
@@ -535,17 +584,26 @@ Deno.test("parseLockfilePins leaves out the hashes of actions", () => {
   ]);
 });
 
-Deno.test("narrowYamlContent leaves a ref the narrower has no tag for", () => {
+Deno.test("narrowYamlContent keeps a ref the narrower has no tag for", () => {
   const yaml = `      - uses: owner/repo@v1\n      - uses: owner/repo@v1\n`;
   let calls = 0;
   const { content, pins } = narrowYamlContent(yaml, () => {
     calls++;
     return undefined;
   });
-  assertEquals(content, yaml);
-  assertEquals(pins, []);
+  // the comment records that there was nothing to narrow to
+  assertEquals(
+    content,
+    `      - uses: owner/repo@v1 # v1\n      - uses: owner/repo@v1 # v1\n`,
+  );
+  assertEquals(pins, [{ original: "owner/repo@v1", pinned: "v1" }]);
   // the result is remembered for the rest of the file
   assertEquals(calls, 1);
+
+  // and for the next run, through the comment
+  assertEquals(parseLockfilePins(content), pins);
+  const again = narrowYamlContent(yaml, failingResolver(), pins);
+  assertEquals(again.content, content);
 });
 
 Deno.test("narrowYamlContent reuses the cache instead of narrowing", () => {
@@ -602,9 +660,9 @@ Deno.test("parsePinComments reads a tag bumped out of its comment's family", () 
 
 // --- collectActionVersions ---
 
-Deno.test("collectActionVersions reads only unpinned full versions", () => {
-  // unpinned partial versions and branches may be in a workflow that wasn't
-  // generated, so they are ignored to not conflict with the generated ones
+Deno.test("collectActionVersions reads only pinned versions", () => {
+  // unpinned refs may be in a workflow that wasn't generated, so they are
+  // ignored to not conflict with the generated ones
   const yaml = `jobs:
   build:
     steps:
@@ -617,23 +675,31 @@ Deno.test("collectActionVersions reads only unpinned full versions", () => {
       - uses: owner/no-comment@${HASH}
 `;
   const { versions, conflicts } = collectActionVersions([yaml]);
-  assertEquals([...versions], [
-    ["owner/full", "v1.2.3"],
-    ["denoland/setup-deno", "v2"],
+  assertEquals([...versions], [["denoland/setup-deno", "v2"]]);
+  assertEquals(conflicts.size, 0);
+});
+
+Deno.test("collectActionVersions ignores a hand-written workflow's full versions", () => {
+  const generated = `      - uses: actions/checkout@${HASH} # v6\n`;
+  const handWritten = `      - uses: actions/checkout@v4.2.2\n`;
+  const { versions, conflicts } = collectActionVersions([
+    generated,
+    handWritten,
   ]);
+  assertEquals([...versions], [["actions/checkout", "v6"]]);
   assertEquals(conflicts.size, 0);
 });
 
 Deno.test("collectActionVersions reads the original ref of a narrowed tag", () => {
   const yaml = `      - uses: actions/checkout@v6.0.1 # v6
       - uses: actions/setup-node@v4.2.0 # v4.2
-      - uses: denoland/setup-deno@v2.0.3
+      - uses: owner/no-full-tag@v3 # v3
 `;
   const { versions, conflicts } = collectActionVersions([yaml]);
   assertEquals([...versions], [
     ["actions/checkout", "v6"],
     ["actions/setup-node", "v4.2"],
-    ["denoland/setup-deno", "v2.0.3"],
+    ["owner/no-full-tag", "v3"],
   ]);
   assertEquals(conflicts.size, 0);
 });
@@ -758,6 +824,31 @@ Deno.test("writeOrLint lockfile mode writes narrowed tags and lints them", async
       () => wf.writeOrLint({ filePath, pinDeps: "lockfile" }),
     );
     assertEquals(exitCode, undefined);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("writeOrLint lockfile mode keeps a bump within the family", async () => {
+  // ex. Dependabot bumping `v6.0.1 # v6` to `v6.0.2 # v6`
+  const wf = lockfileWorkflow("actions/checkout@v6");
+  const { dir, filePath } = tempFilePath();
+  try {
+    wf.writeOrLint({ filePath, pinDeps: { narrow: () => "v6.0.1" } });
+    const bumped = fs.readFileSync(filePath, "utf8").replace(
+      "actions/checkout@v6.0.1 # v6",
+      "actions/checkout@v6.0.2 # v6",
+    );
+    fs.writeFileSync(filePath, bumped);
+
+    const { exitCode } = await captureRun(
+      ["--lint"],
+      () => wf.writeOrLint({ filePath, pinDeps: "lockfile" }),
+    );
+    assertEquals(exitCode, undefined);
+
+    wf.writeOrLint({ filePath, pinDeps: { narrow: failingResolver() } });
+    assertEquals(fs.readFileSync(filePath, "utf8"), bumped);
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }
@@ -1048,7 +1139,7 @@ Deno.test("cli --pull-versions updates the scripts from the generated yaml", asy
 Deno.test("cli --pull-versions reads versions written in lockfile mode", async () => {
   const dir = createWorkflowsDir({
     script: `const checkout = "actions/checkout@v6";
-const node = "actions/setup-node@v4.1.0";
+const node = "actions/setup-node@v4.1";
 writeOrLint;
 `,
   });
@@ -1056,7 +1147,7 @@ writeOrLint;
   fs.writeFileSync(
     join(workflowsDir, "ci.generated.yml"),
     `      - uses: actions/checkout@v7.0.0 # v6
-      - uses: actions/setup-node@v4.2.0
+      - uses: actions/setup-node@v4.2.0 # v4.1
 `,
   );
   try {
@@ -1065,7 +1156,7 @@ writeOrLint;
     assertEquals(
       fs.readFileSync(join(workflowsDir, "ci.ts"), "utf8"),
       `const checkout = "actions/checkout@v7";
-const node = "actions/setup-node@v4.2.0";
+const node = "actions/setup-node@v4.2";
 writeOrLint;
 `,
     );
@@ -1097,6 +1188,98 @@ Deno.test("cli --pull-versions ignores a hand-written workflow's partial version
     );
   } finally {
     Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli --lint runs gh actions-lock --verify when there is a lockfile", async () => {
+  const dir = createLockfileRepo();
+  const gh = fakeGh({ verifyStatus: 0 });
+  try {
+    const { output, exitCode } = await runCliIn(dir, ["--lint"], gh.run);
+    assertEquals(exitCode, undefined);
+    assertStringIncludes(
+      output,
+      "Verifying\x1b[0m .github/workflows/actions.lock by running `gh actions-lock --verify`",
+    );
+    assertEquals(gh.calls.map((call) => call.args), [
+      ["extension", "list"],
+      ["actions-lock", "--verify"],
+    ]);
+    for (const call of gh.calls) {
+      assertEquals(fs.realpathSync(call.cwd), fs.realpathSync(dir));
+    }
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli --lint fails when gh actions-lock --verify fails", async () => {
+  const dir = createLockfileRepo();
+  const gh = fakeGh({ verifyStatus: 1 });
+  try {
+    const { output, exitCode } = await runCliIn(dir, ["--lint"], gh.run);
+    assertEquals(exitCode, 1);
+    assertStringIncludes(output, "`gh actions-lock --verify` failed");
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli --lint warns when gh is not installed", async () => {
+  const dir = createLockfileRepo();
+  try {
+    const { output, exitCode } = await runCliIn(
+      dir,
+      ["--lint"],
+      () => undefined,
+    );
+    assertEquals(exitCode, undefined);
+    assertStringIncludes(
+      output,
+      "not verifying .github/workflows/actions.lock because the gh cli is not installed",
+    );
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli --lint warns when the gh actions-lock extension is not installed", async () => {
+  const dir = createLockfileRepo();
+  const gh = fakeGh({
+    verifyStatus: 0,
+    extensions: "gh stack\tgithub/gh-stack\tv0.1.1\n",
+  });
+  try {
+    const { output, exitCode } = await runCliIn(dir, ["--lint"], gh.run);
+    assertEquals(exitCode, undefined);
+    assertStringIncludes(
+      output,
+      "because the gh actions-lock extension is not installed",
+    );
+    assertEquals(gh.calls.map((call) => call.args), [["extension", "list"]]);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("cli only runs gh actions-lock --verify when linting a lockfile", async () => {
+  const gh = fakeGh({ verifyStatus: 0 });
+  const withLockfile = createLockfileRepo();
+  const withoutLockfile = createLockfileRepo();
+  fs.rmSync(join(withoutLockfile, ".github/workflows/actions.lock"));
+  try {
+    assertEquals(
+      (await runCliIn(withLockfile, [], gh.run)).exitCode,
+      undefined,
+    );
+    assertEquals(
+      (await runCliIn(withoutLockfile, ["--lint"], gh.run)).exitCode,
+      undefined,
+    );
+    assertEquals(gh.calls, []);
+  } finally {
+    Deno.removeSync(withLockfile, { recursive: true });
+    Deno.removeSync(withoutLockfile, { recursive: true });
   }
 });
 
@@ -1313,6 +1496,35 @@ function createWorkflowsDir(
   return dir;
 }
 
+/**
+ * Creates a repository with a workflow lockfile and a script that uses
+ * `writeOrLint` without writing anything.
+ */
+function createLockfileRepo(): string {
+  return createTempDir({
+    ".github/workflows/ci.ts": "// writeOrLint\n",
+    ".github/workflows/actions.lock": "version: 'v0.0.3'\n",
+  });
+}
+
+/** Creates a command runner standing in for an installed `gh`. */
+function fakeGh(options: { verifyStatus: number; extensions?: string }) {
+  const calls: { args: readonly string[]; cwd: string }[] = [];
+  const run: CommandRunner = (command, args, { cwd }) => {
+    assertEquals(command, "gh");
+    calls.push({ args, cwd });
+    if (args[0] === "extension") {
+      return {
+        status: 0,
+        stdout: options.extensions ??
+          "gh actions-lock\tgithub/gh-actions-lock\tv0.4.1\n",
+      };
+    }
+    return { status: options.verifyStatus, stdout: "" };
+  };
+  return { calls, run };
+}
+
 /** Creates a temp directory containing the given files, keyed by relative path. */
 function createTempDir(files: Record<string, string>): string {
   const dir = Deno.makeTempDirSync();
@@ -1336,12 +1548,13 @@ class ExitError extends Error {}
 async function runCliIn(
   cwd: string,
   args: string[],
+  runCommand?: CommandRunner,
 ): Promise<{ output: string; exitCode: number | undefined }> {
   const originalCwd = Deno.cwd();
   Deno.chdir(cwd);
   try {
     // must stay awaited so the cwd is still in place for the dynamic imports
-    return await captureRun(args, runCli);
+    return await captureRun(args, () => runCli(runCommand));
   } finally {
     Deno.chdir(originalCwd);
   }

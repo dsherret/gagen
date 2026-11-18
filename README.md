@@ -152,10 +152,11 @@ collects the current version for each action, then rewrites the
 `"owner/repo@<old>"` literals in the scripts of both folders to match. The YAML
 is already up to date, so no regeneration is needed.
 
-Unpinned full version tags (e.g. `actions/checkout@v6.0.2`, as written in
-[lockfile mode](#workflow-lockfiles-experimental)) are collected as they are.
-Other unpinned refs (e.g. `@v6` or `@main`) are ignored, since they may be in
-hand-written workflows next to the generated ones.
+Only `uses:` lines with a version comment are read, which are the ones gagen
+pinned (e.g. `@<hash> # v6`, or `@v6.0.1 # v6` in
+[lockfile mode](#workflow-lockfiles-experimental)). Lines without one (e.g.
+`@v6.0.2` or `@main`) are ignored, since they may be in hand-written workflows
+next to the generated ones.
 
 Limitations:
 
@@ -254,8 +255,10 @@ steps:
 
 This matches the narrowing `gh actions-lock` does when it first locks a
 workflow, so it leaves gagen's output as-is. Full versions and branches are
-written as they are. As with hashes, the narrowed tags are reused on the next
-run and `--update-pins` re-resolves them.
+written as they are. A partial version without a full version tag at its commit
+is kept too, with itself as the comment (e.g. `owner/repo@v3 # v3`) so the next
+run doesn't look for one again. As with hashes, the narrowed tags are reused on
+the next run and `--update-pins` re-resolves them.
 
 Reusable workflows from other repositories (e.g.
 `owner/repo/.github/workflows/release.yml@v1`) are still pinned to a commit
@@ -268,26 +271,49 @@ npx gagen
 gh actions-lock
 ```
 
-Then in CI, check both:
+When there is a `.github/workflows/actions.lock`, `npx gagen --lint` also runs
+`gh actions-lock --verify` after linting, so a CI job only needs the extension
+installed and a token for `gh`:
 
-```sh
-npx gagen --lint
-gh actions-lock --verify
+```yaml
+- run: gh extension install github/gh-actions-lock
+- run: npx gagen --lint
+  env:
+    GH_TOKEN: ${{ github.token }}
+```
+
+If `gh` or the extension isn't installed, gagen prints a warning and skips the
+verification.
+
+Custom narrowing (and a resolver for the reusable workflows) can also be
+provided:
+
+```ts
+wf.writeOrLint({
+  filePath,
+  pinDeps: {
+    narrow: (owner, repo, ref) => lookupFullTag(owner, repo, ref),
+    resolve: (owner, repo, ref) => lookupHash(owner, repo, ref),
+  },
+});
 ```
 
 Notes:
 
-- Use `pinDeps: "lockfile"` for every workflow and composite action in the
-  repository, and write tags rather than commit hashes in the scripts.
-  `gh actions-lock` rewrites any action pinned to a commit hash to a tag (unless
-  run with `--no-narrow`), so `--lint` then fails for that file.
+- Use `pinDeps: "lockfile"` for every workflow in the repository, and write tags
+  rather than commit hashes in their scripts. `gh actions-lock` rewrites an
+  action a workflow pins to a commit hash to a tag (unless run with
+  `--no-narrow`), so `--lint` then fails for that file. It leaves the `uses:` of
+  composite actions as written, so those work with either mode, though lockfile
+  mode keeps them consistent with the workflows.
 - `gh actions-lock` can't lock a local `./` action that uses other actions.
   Reference composite actions in the same repository with `$/` instead (ex.
   `uses: "$/.github/actions/setup"`) rather than letting
   `gh actions-lock --migrate-local-actions` rewrite the generated files.
 - When Dependabot bumps a narrowed tag outside its family (ex. `v6.0.1 # v6` to
   `v7.0.0 # v6`), `--pull-versions` updates the script to the same precision
-  (`v7`). Full version tags are pulled as-is.
+  (`v7`). A full version written in a script has no comment in the output, so
+  `--pull-versions` doesn't pick up a bump of it.
 
 ## Conditions
 
