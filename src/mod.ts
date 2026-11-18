@@ -20,22 +20,24 @@ export type {
   StepsJobConfig,
   StepsJobDef,
 } from "./job.ts";
-export { Workflow, workflow } from "./workflow.ts";
+export { Workflow, workflow, type WorkflowFunction } from "./workflow.ts";
 export { isLinting, isUpdatingPins, type WriteOrLintOptions } from "./write.ts";
-export { Action, action, ActionInputs, defineInputs } from "./action.ts";
+export { Action, action, type ActionFunction, ActionInputs } from "./action.ts";
 export type {
   ActionConfig,
   ActionInputDef,
   ActionOutputDef,
 } from "./action.ts";
 export type {
-  WorkflowCallInput,
   WorkflowCallOutput,
   WorkflowCallSecret,
   WorkflowCallTrigger,
   WorkflowConfig,
+  WorkflowDispatchTrigger,
   WorkflowTriggers,
 } from "./workflow.ts";
+export { WorkflowCallInputs, WorkflowDispatchInputs } from "./inputs.ts";
+export type { WorkflowCallInput, WorkflowDispatchInput } from "./inputs.ts";
 export {
   concat,
   Condition,
@@ -81,11 +83,14 @@ export type {
 
 import { workflow as workflow_ } from "./workflow.ts";
 import { artifact as artifact_ } from "./artifact.ts";
+import { action as action_ } from "./action.ts";
 
 /** @deprecated Use `workflow` instead. */
 export const createWorkflow: typeof workflow_ = workflow_;
 /** @deprecated Use `artifact` instead. */
 export const defineArtifact: typeof artifact_ = artifact_;
+/** @deprecated Use `action.defineInputs` instead. */
+export const defineInputs: typeof action_.defineInputs = action_.defineInputs;
 
 // run the cli
 if (import.meta.main) {

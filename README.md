@@ -631,6 +631,33 @@ workflow({
 });
 ```
 
+## Typed workflow inputs
+
+`workflow.defineDispatchInputs()` and `workflow.defineCallInputs()` give you
+typed access to the inputs of a `workflow_dispatch` or `workflow_call` trigger:
+
+```ts
+import { step, workflow } from "gagen";
+
+const inputs = workflow.defineDispatchInputs({
+  environment: { type: "choice", options: ["staging", "production"] },
+});
+
+workflow({
+  name: "deploy",
+  on: { workflow_dispatch: { inputs } },
+  jobs: [{
+    id: "deploy",
+    runsOn: "ubuntu-latest",
+    // inputs.environment is an ExpressionValue("inputs.environment")
+    steps: [step({ run: `./deploy.sh ${inputs.environment}` })],
+  }],
+});
+```
+
+A plain object of input definitions works too. For composite actions, use
+[`action.defineInputs()`](#composite-actions).
+
 ## Composite actions
 
 `action()` generates the `action.yml` of a
@@ -640,9 +667,9 @@ propagation work the same as in a job, and `uses:` references get pinned.
 
 ```ts
 // .github/workflows/action.ts
-import { action, defineInputs, step } from "gagen";
+import { action, step } from "gagen";
 
-const inputs = defineInputs({
+const inputs = action.defineInputs({
   version: { description: "Version to install", default: "latest" },
   cache: { description: "Cache downloads", default: "false" },
 });

@@ -11,15 +11,17 @@ import {
 import type { Permissions } from "./permissions.ts";
 import { type ConfigValue, serializeConfigValues, type Step } from "./step.ts";
 import { type WriteOrLintOptions, writeOrLintYaml } from "./write.ts";
+import { ActionInputs } from "./action.ts";
+import {
+  defineWorkflowCallInputs,
+  defineWorkflowDispatchInputs,
+  type WithInputExprs,
+  type WorkflowCallInput,
+  WorkflowCallInputs,
+  type WorkflowDispatchInput,
+  WorkflowDispatchInputs,
+} from "./inputs.ts";
 import fs from "node:fs";
-
-/** An input declared by a `workflow_call` trigger. */
-export interface WorkflowCallInput {
-  type: "string" | "boolean" | "number";
-  description?: string;
-  required?: boolean;
-  default?: string | boolean | number;
-}
 
 /** An output declared by a `workflow_call` trigger. */
 export interface WorkflowCallOutput {
@@ -33,9 +35,24 @@ export interface WorkflowCallSecret {
   required?: boolean;
 }
 
+/** The `workflow_dispatch` trigger, which lets a workflow be run manually. */
+export interface WorkflowDispatchTrigger {
+  /**
+   * The inputs, either from `workflow.defineDispatchInputs` or as a plain
+   * object of input definitions.
+   */
+  inputs?:
+    | WorkflowDispatchInputs<string>
+    | Record<string, WorkflowDispatchInput>;
+}
+
 /** The `workflow_call` trigger, which makes a workflow reusable. */
 export interface WorkflowCallTrigger {
-  inputs?: Record<string, WorkflowCallInput>;
+  /**
+   * The inputs, either from `workflow.defineCallInputs` or as a plain object
+   * of input definitions.
+   */
+  inputs?: WorkflowCallInputs<string> | Record<string, WorkflowCallInput>;
   outputs?: Record<string, WorkflowCallOutput>;
   secrets?: Record<string, WorkflowCallSecret>;
 }
@@ -60,7 +77,7 @@ export interface WorkflowTriggers {
     paths?: string[];
     pathsIgnore?: string[];
   };
-  workflow_dispatch?: Record<string, unknown>;
+  workflow_dispatch?: WorkflowDispatchTrigger;
   workflow_call?: WorkflowCallTrigger;
   schedule?: { cron: string }[];
   [key: string]: unknown;
@@ -212,10 +229,35 @@ export class Workflow {
   }
 }
 
-/** Creates a workflow from the given configuration. */
-export function workflow(config: WorkflowConfig): Workflow {
-  return new Workflow(config);
+/** Creates a workflow, with helpers for defining its parts. */
+export interface WorkflowFunction {
+  /** Creates a workflow from the given configuration. */
+  (config: WorkflowConfig): Workflow;
+  /**
+   * Defines the inputs of a `workflow_dispatch` trigger, returning them with
+   * a typed property per input holding that input's `inputs.<name>`
+   * expression.
+   */
+  defineDispatchInputs<const T extends Record<string, WorkflowDispatchInput>>(
+    defs: T,
+  ): WithInputExprs<WorkflowDispatchInputs<keyof T & string>, keyof T & string>;
+  /**
+   * Defines the inputs of a `workflow_call` trigger, returning them with a
+   * typed property per input holding that input's `inputs.<name>` expression.
+   */
+  defineCallInputs<const T extends Record<string, WorkflowCallInput>>(
+    defs: T,
+  ): WithInputExprs<WorkflowCallInputs<keyof T & string>, keyof T & string>;
 }
+
+/** Creates a workflow from the given configuration. */
+export const workflow: WorkflowFunction = Object.assign(
+  (config: WorkflowConfig): Workflow => new Workflow(config),
+  {
+    defineDispatchInputs: defineWorkflowDispatchInputs,
+    defineCallInputs: defineWorkflowCallInputs,
+  },
+);
 
 // --- trigger serialization ---
 
@@ -263,9 +305,44 @@ function serializeTriggerObject(
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value == null) continue;
-    result[camelToKebab(key)] = value;
+    result[camelToKebab(key)] = key === "inputs"
+      ? serializeTriggerInputs(event, value)
+      : value;
   }
   return result;
+}
+
+/** The function that defines the inputs of each trigger that has them. */
+const INPUTS_HELPERS: Record<string, string> = {
+  workflow_dispatch: "workflow.defineDispatchInputs()",
+  workflow_call: "workflow.defineCallInputs()",
+};
+
+/**
+ * Serializes the inputs of a trigger, failing for inputs that were defined for
+ * a different trigger or for a composite action.
+ */
+function serializeTriggerInputs(event: string, inputs: unknown): unknown {
+  if (inputs instanceof WorkflowDispatchInputs) {
+    if (event === "workflow_dispatch") return inputs[internal.toYaml]();
+    throw wrongInputsError(event, "workflow_dispatch");
+  } else if (inputs instanceof WorkflowCallInputs) {
+    if (event === "workflow_call") return inputs[internal.toYaml]();
+    throw wrongInputsError(event, "workflow_call");
+  } else if (inputs instanceof ActionInputs) {
+    throw wrongInputsError(event, "composite action");
+  }
+  return inputs;
+}
+
+function wrongInputsError(event: string, definedFor: string): Error {
+  const helper = INPUTS_HELPERS[event];
+  return new Error(
+    `on.${event}.inputs received ${definedFor} inputs. ` +
+      (helper == null
+        ? "Pass a plain input definition object."
+        : `Use ${helper} or pass a plain input definition object.`),
+  );
 }
 
 /** Converts a camelCased config key to its kebab-cased YAML form. */
