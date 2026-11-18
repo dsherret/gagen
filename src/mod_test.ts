@@ -6808,8 +6808,8 @@ Deno.test("parsePinComments reads inline uses comments", () => {
       - uses: denoland/setup-deno@${"b".repeat(40)} # v2
 `;
   assertEquals(parsePinComments(content), [
-    { original: "actions/checkout@v6", hash },
-    { original: "denoland/setup-deno@v2", hash: "b".repeat(40) },
+    { original: "actions/checkout@v6", pinned: hash },
+    { original: "denoland/setup-deno@v2", pinned: "b".repeat(40) },
   ]);
 });
 
@@ -6821,7 +6821,7 @@ name: ci
 # some other comment
 `;
   assertEquals(parsePinComments(content), [
-    { original: "actions/checkout@v6", hash },
+    { original: "actions/checkout@v6", pinned: hash },
   ]);
 });
 
@@ -6835,7 +6835,7 @@ Deno.test("parsePinComments deduplicates inline and footer entries", () => {
 # gagen:pin actions/checkout@v6 = ${hash}
 `;
   assertEquals(parsePinComments(content), [
-    { original: "actions/checkout@v6", hash },
+    { original: "actions/checkout@v6", pinned: hash },
   ]);
 });
 
@@ -6859,7 +6859,7 @@ jobs:
   assertStringIncludes(content, `uses: denoland/setup-deno@${fakeHash} # v2`);
   assertEquals(pins.length, 2);
   assertEquals(pins[0].original, "actions/checkout@v6");
-  assertEquals(pins[0].hash, fakeHash);
+  assertEquals(pins[0].pinned, fakeHash);
   assertEquals(pins[1].original, "denoland/setup-deno@v2");
 });
 
@@ -6890,14 +6890,14 @@ Deno.test("pinYamlContent migrates legacy footer pins to inline on second run", 
     steps:
       - uses: actions/checkout@${hash}
 `;
-  const cache: PinEntry[] = [{ original: "actions/checkout@v6", hash }];
+  const cache: PinEntry[] = [{ original: "actions/checkout@v6", pinned: hash }];
   const resolve = () => {
     throw new Error("should not be called");
   };
   const { content, pins } = pinYamlContent(yaml, resolve, cache);
   assertEquals(pins.length, 1);
   assertEquals(pins[0].original, "actions/checkout@v6");
-  assertEquals(pins[0].hash, hash);
+  assertEquals(pins[0].pinned, hash);
   assertStringIncludes(content, `uses: actions/checkout@${hash} # v6`);
 });
 
@@ -6915,7 +6915,7 @@ Deno.test("pinYamlContent preserves pins on second run via inline comment", () =
     throw new Error("should not be called");
   };
   const { content, pins } = pinYamlContent(yaml, resolve);
-  assertEquals(pins, [{ original: "actions/checkout@v6", hash }]);
+  assertEquals(pins, [{ original: "actions/checkout@v6", pinned: hash }]);
   assertStringIncludes(content, `uses: actions/checkout@${hash} # v6`);
 });
 
@@ -6927,7 +6927,7 @@ Deno.test("pinYamlContent uses cache and still emits pins", () => {
     steps:
       - uses: actions/checkout@v6
 `;
-  const cache: PinEntry[] = [{ original: "actions/checkout@v6", hash }];
+  const cache: PinEntry[] = [{ original: "actions/checkout@v6", pinned: hash }];
   const resolve = () => {
     throw new Error("should not be called — cache should be used");
   };
@@ -6935,7 +6935,7 @@ Deno.test("pinYamlContent uses cache and still emits pins", () => {
   assertStringIncludes(content, `uses: actions/checkout@${hash}`);
   assertEquals(pins.length, 1);
   assertEquals(pins[0].original, "actions/checkout@v6");
-  assertEquals(pins[0].hash, hash);
+  assertEquals(pins[0].pinned, hash);
 });
 
 Deno.test("pinYamlContent deduplicates same action used twice", () => {
@@ -7076,7 +7076,7 @@ Deno.test("unpinParsedYaml replaces hashes with original tags", () => {
       },
     },
   };
-  const pins: PinEntry[] = [{ original: "actions/checkout@v6", hash }];
+  const pins: PinEntry[] = [{ original: "actions/checkout@v6", pinned: hash }];
   unpinParsedYaml(obj, pins);
   assertEquals(
     (obj.jobs.build.steps[0] as Record<string, unknown>).uses,
@@ -7095,7 +7095,7 @@ Deno.test("unpinParsedYaml handles reusable workflow uses", () => {
   };
   const pins: PinEntry[] = [{
     original: "org/repo/.github/workflows/deploy.yml@main",
-    hash,
+    pinned: hash,
   }];
   unpinParsedYaml(obj, pins);
   assertEquals(
@@ -7124,8 +7124,8 @@ Deno.test("unpinParsedYaml restores uses nested inside a parallel block", () => 
     },
   };
   const pins: PinEntry[] = [
-    { original: "actions/checkout@v6", hash: hashA },
-    { original: "actions/setup-node@v4", hash: hashB },
+    { original: "actions/checkout@v6", pinned: hashA },
+    { original: "actions/setup-node@v4", pinned: hashB },
   ];
   unpinParsedYaml(obj, pins);
   const block = obj.jobs.build.steps[0] as {

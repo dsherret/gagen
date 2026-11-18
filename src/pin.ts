@@ -3,9 +3,18 @@ import { execFileSync } from "node:child_process";
 export interface PinEntry {
   /** the original uses value, e.g. "actions/checkout@v6" */
   original: string;
-  /** the resolved commit hash */
-  hash: string;
+  /**
+   * the ref the original is pinned to, which is a commit hash or, in lockfile
+   * mode, a full version tag (ex. "v6.0.1")
+   */
+  pinned: string;
 }
+
+/**
+ * What a `uses:` ref is pinned to: a commit hash, or a full version tag when
+ * the commit is pinned by `.github/workflows/actions.lock` instead.
+ */
+export type PinKind = "hash" | "tag";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 
@@ -81,6 +90,87 @@ export type RefResolver = (
 ) => string;
 
 /**
+ * Narrows a partial version ref (ex. `v6` or `v6.1`) to the highest full
+ * version tag (ex. `v6.1.2`) in its family that points at the same commit,
+ * or gets undefined when there is no such tag.
+ *
+ * This is the same narrowing `gh actions-lock` does when it first locks a
+ * workflow, so a workflow gagen narrowed is left as-is by it.
+ */
+export function narrowRef(
+  owner: string,
+  repo: string,
+  ref: string,
+): string | undefined {
+  if (!isNarrowableVersionRef(ref)) return undefined;
+  const tagCommits = listTagCommits(owner, repo);
+  // a partial version is almost always a tag, but fall back to resolving it
+  // as a branch for the repos that move a `v1` branch instead
+  const commit = tagCommits.get(ref) ?? resolveRef(owner, repo, ref);
+  return pickNarrowedTag(ref, commit, tagCommits);
+}
+
+/**
+ * Gets the full version tag a partial version ref narrows to (ex. `v6.0.1`
+ * for `v6`), or undefined to leave the ref as written.
+ */
+export type RefNarrower = (
+  owner: string,
+  repo: string,
+  ref: string,
+) => string | undefined;
+
+/**
+ * Picks the tag `ref` narrows to among the tags at the same commit, matching
+ * `gh actions-lock`: the highest full version in the ref's family (ex. `v6`
+ * narrows to `v6.x.y` and `v6.1` to `v6.1.y`).
+ */
+export function pickNarrowedTag(
+  ref: string,
+  commit: string,
+  tagCommits: ReadonlyMap<string, string>,
+): string | undefined {
+  const refVersion = parseVersionRef(ref);
+  if (refVersion == null || isFullVersion(refVersion)) return undefined;
+  let best: { tag: string; version: VersionRef } | undefined;
+  for (const [tag, tagCommit] of tagCommits) {
+    if (tagCommit !== commit) continue;
+    const version = parseVersionRef(tag);
+    if (version == null || !narrowsVersion(version, refVersion)) continue;
+    if (best == null || isHigherVersion(version, best.version)) {
+      best = { tag, version };
+    }
+  }
+  return best?.tag;
+}
+
+/**
+ * Parses the output of `git ls-remote --tags` into the commit each tag points
+ * at, using the peeled commit of annotated tags.
+ */
+export function parseTagCommits(output: string): Map<string, string> {
+  const tagCommits = new Map<string, string>();
+  const peeledSuffix = "^{}";
+  const tagPrefix = "refs/tags/";
+  for (const line of output.split("\n")) {
+    const [commit, refName] = line.trim().split(/\s+/);
+    if (commit == null || refName == null) continue;
+    if (!refName.startsWith(tagPrefix)) continue;
+    const isPeeled = refName.endsWith(peeledSuffix);
+    const tag = refName.substring(
+      tagPrefix.length,
+      isPeeled ? refName.length - peeledSuffix.length : refName.length,
+    );
+    // the peeled line of an annotated tag names the commit, while the plain
+    // line names the tag object, so the peeled line wins
+    if (isPeeled || !tagCommits.has(tag)) {
+      tagCommits.set(tag, commit);
+    }
+  }
+  return tagCommits;
+}
+
+/**
  * Resolves non-SHA refs in YAML content to commit hashes, writing the
  * original ref as an inline comment after the pinned `uses:` value.
  */
@@ -93,37 +183,24 @@ export function pinYamlContent(
   const resolved = new Map<string, string>();
   if (cache) {
     for (const entry of cache) {
-      resolved.set(entry.original, entry.hash);
+      resolved.set(entry.original, entry.pinned);
     }
   }
 
-  const lines = yamlStr.split("\n");
-  for (const [index, line] of lines.entries()) {
-    const usesLine = parseUsesLine(line);
-    if (usesLine == null) continue;
-    const { prefix, scalar, rest, cr } = usesLine;
-
-    // the yaml serializer quotes some values (ex. `docker://` images), so
-    // work with the unquoted value and put the quotes back on the way out
-    const { quote, value: usesValue } = splitQuotedScalar(scalar);
-    const parsed = parseActionUses(usesValue);
-    if (!parsed) continue;
-
+  const content = rewriteUsesLines(yamlStr, (usesValue, parsed, rest) => {
+    const actionPath = usesValue.substring(0, usesValue.lastIndexOf("@"));
     if (isCommitHash(parsed.ref)) {
       // already pinned — recover the original ref from an inline comment
       // or, failing that, from the legacy footer entries in the cache
-      const actionPath = usesValue.substring(0, usesValue.lastIndexOf("@"));
       const originalRef = parsePinComment(rest) ??
         findCachedRef(parsed, cache);
-      if (!originalRef) continue;
+      if (!originalRef) return undefined;
 
       const original = `${actionPath}@${originalRef}`;
       if (!pins.some((p) => p.original === original)) {
-        pins.push({ original, hash: parsed.ref });
+        pins.push({ original, pinned: parsed.ref });
       }
-      lines[index] =
-        `${prefix}${quote}${usesValue}${quote} # ${originalRef}${cr}`;
-      continue;
+      return { value: usesValue, comment: originalRef };
     }
 
     let hash = resolved.get(usesValue);
@@ -132,23 +209,103 @@ export function pinYamlContent(
       resolved.set(usesValue, hash);
     }
     if (!pins.some((p) => p.original === usesValue)) {
-      pins.push({ original: usesValue, hash });
+      pins.push({ original: usesValue, pinned: hash });
     }
+    return { value: `${actionPath}@${hash}`, comment: parsed.ref };
+  });
 
-    const actionPath = usesValue.substring(0, usesValue.lastIndexOf("@"));
-    lines[index] =
-      `${prefix}${quote}${actionPath}@${hash}${quote} # ${parsed.ref}${cr}`;
-  }
-
-  return { content: lines.join("\n"), pins };
+  return { content, pins };
 }
 
 /**
- * Extracts pin entries from file content. Reads the current inline format
- * (`uses: owner/repo@HASH # ref`) and, for backwards compatibility, the
- * legacy footer format (`# gagen:pin owner/repo@ref = HASH`).
+ * Narrows partial version refs in YAML content (ex. `v6`) to full version
+ * tags (ex. `v6.0.1`), writing the original ref as an inline comment after
+ * the narrowed `uses:` value.
+ *
+ * This is the pinning used alongside a `.github/workflows/actions.lock`
+ * lockfile: the lockfile pins each tag to a commit, so the output keeps tags
+ * rather than commit hashes. Refs that are not partial versions (branches,
+ * full versions and commit hashes) are left as written. So is a partial
+ * version without a full version tag at its commit, but with itself as the
+ * comment (ex. `@v6 # v6`) to not look for one again on the next run.
+ *
+ * The exception is a reusable workflow from another repository, which the
+ * lockfile does not cover, so it is still pinned to a commit hash.
  */
-export function parsePinComments(content: string): PinEntry[] {
+export function narrowYamlContent(
+  yamlStr: string,
+  narrow: RefNarrower = narrowRef,
+  cache?: readonly PinEntry[],
+  resolve: RefResolver = resolveRef,
+): { content: string; pins: PinEntry[] } {
+  const pins: PinEntry[] = [];
+  const pinned = new Map<string, string>();
+  for (const entry of cache ?? []) {
+    pinned.set(entry.original, entry.pinned);
+  }
+
+  const content = rewriteUsesLines(yamlStr, (usesValue, parsed) => {
+    const isWorkflow = isReusableWorkflow(parsed);
+    if (
+      isWorkflow
+        ? isCommitHash(parsed.ref)
+        : !isNarrowableVersionRef(parsed.ref)
+    ) {
+      return undefined;
+    }
+
+    let ref = pinned.get(usesValue);
+    if (ref == null) {
+      // when there is no full version to narrow to, the ref is kept with
+      // itself as the comment (ex. `@v6 # v6`), which records that so the
+      // next run doesn't list the repository's tags again
+      ref = isWorkflow
+        ? resolve(parsed.owner, parsed.repo, parsed.ref)
+        : narrow(parsed.owner, parsed.repo, parsed.ref) ?? parsed.ref;
+      pinned.set(usesValue, ref);
+    }
+
+    if (!pins.some((p) => p.original === usesValue)) {
+      pins.push({ original: usesValue, pinned: ref });
+    }
+    const actionPath = usesValue.substring(0, usesValue.lastIndexOf("@"));
+    return { value: `${actionPath}@${ref}`, comment: parsed.ref };
+  });
+
+  return { content, pins };
+}
+
+/**
+ * Extracts the pin entries written by lockfile mode: the narrowed tags of
+ * actions and the commit hashes of reusable workflows.
+ *
+ * The other pins are left out so that they are pinned again the lockfile
+ * mode way: the hashes of actions (ex. in a file switched over from hash
+ * pinning) get narrowed tags, and the tags of reusable workflows get hashes.
+ */
+export function parseLockfilePins(content: string): PinEntry[] {
+  const tagPins = parsePinComments(content, "tag").filter((pin) =>
+    !isReusableWorkflowUses(pin.original)
+  );
+  const workflowPins = parsePinComments(content, "hash").filter((pin) =>
+    isReusableWorkflowUses(pin.original)
+  );
+  return [...tagPins, ...workflowPins];
+}
+
+/**
+ * Extracts pin entries from file content.
+ *
+ * For commit hashes, this reads the current inline format
+ * (`uses: owner/repo@HASH # ref`) and, for backwards compatibility, the
+ * legacy footer format (`# gagen:pin owner/repo@ref = HASH`). For tags, it
+ * reads the inline format written by lockfile mode
+ * (`uses: owner/repo@v6.0.1 # v6`).
+ */
+export function parsePinComments(
+  content: string,
+  kind: PinKind = "hash",
+): PinEntry[] {
   const pins: PinEntry[] = [];
   const seen = new Set<string>();
 
@@ -156,19 +313,19 @@ export function parsePinComments(content: string): PinEntry[] {
     const usesLine = parseUsesLine(line);
     if (usesLine == null) continue;
     const entry = parseInlinePin(usesLine.scalar, usesLine.rest);
-    if (entry == null || seen.has(entry.original)) continue;
+    if (entry == null || entry.kind !== kind || seen.has(entry.original)) {
+      continue;
+    }
     seen.add(entry.original);
-    pins.push(entry);
+    pins.push({ original: entry.original, pinned: entry.pinned });
   }
 
-  // note: `$` in multiline mode also matches before the carriage return of a
-  // crlf line ending, so this reads crlf files as-is
-  const footerRe = /^# gagen:pin (.+) = ([0-9a-f]{40})$/gm;
-  let m;
-  while ((m = footerRe.exec(content)) !== null) {
-    if (seen.has(m[1])) continue;
-    seen.add(m[1]);
-    pins.push({ original: m[1], hash: m[2] });
+  if (kind === "hash") {
+    for (const pin of parseFooterPins(content)) {
+      if (seen.has(pin.original)) continue;
+      seen.add(pin.original);
+      pins.push(pin);
+    }
   }
 
   return pins;
@@ -179,6 +336,10 @@ export function parsePinComments(content: string): PinEntry[] {
  * YAML files. If an action appears in multiple files with different
  * versions, it is returned as a conflict instead — conflicts must be
  * resolved manually since there is no single correct target version.
+ *
+ * The version of a pinned `uses:` value is the original ref in its comment,
+ * while an unpinned one (ex. a full version tag written in lockfile mode) is
+ * its own version.
  */
 export function collectActionVersions(
   yamlContents: readonly string[],
@@ -188,8 +349,8 @@ export function collectActionVersions(
 } {
   const seen = new Map<string, Set<string>>();
   for (const content of yamlContents) {
-    for (const pin of parsePinComments(content)) {
-      const parsed = parseActionUses(pin.original);
+    for (const uses of parseVersionedUses(content)) {
+      const parsed = parseActionUses(uses);
       if (!parsed) continue;
       const action = parsed.path
         ? `${parsed.owner}/${parsed.repo}/${parsed.path}`
@@ -245,7 +406,8 @@ export function pullVersionsInSource(
 
 /**
  * Replaces the tag/branch ref of every `uses` value in a parsed YAML object
- * with the hash it is pinned to in the given pin mapping.
+ * with the hash (or full version tag) it is pinned to in the given pin
+ * mapping.
  *
  * This is the direction to compare in when linting. Mapping an original ref
  * to a hash is a function, whereas the reverse is not: two refs commonly
@@ -261,7 +423,7 @@ export function pinParsedYaml(
   const originalToPinned = new Map<string, string>();
   for (const pin of pins) {
     const actionPath = pin.original.substring(0, pin.original.lastIndexOf("@"));
-    originalToPinned.set(pin.original, `${actionPath}@${pin.hash}`);
+    originalToPinned.set(pin.original, `${actionPath}@${pin.pinned}`);
   }
 
   pinUsesValues(obj, originalToPinned);
@@ -285,7 +447,7 @@ export function unpinParsedYaml(
   for (const pin of pins) {
     const atIndex = pin.original.lastIndexOf("@");
     const actionPath = pin.original.substring(0, atIndex);
-    hashToOriginal.set(`${actionPath}@${pin.hash}`, pin.original);
+    hashToOriginal.set(`${actionPath}@${pin.pinned}`, pin.original);
   }
 
   const record = obj as Record<string, unknown>;
@@ -361,6 +523,76 @@ function pinUsesValues(
   }
 }
 
+type ParsedUses = NonNullable<ReturnType<typeof parseActionUses>>;
+
+/**
+ * Calls `rewrite` for each action `uses:` line in the YAML and replaces the
+ * line's value and comment with what it returns. Lines it returns undefined
+ * for are left untouched.
+ */
+function rewriteUsesLines(
+  yamlStr: string,
+  rewrite: (
+    usesValue: string,
+    parsed: ParsedUses,
+    rest: string,
+  ) => { value: string; comment: string } | undefined,
+): string {
+  const lines = yamlStr.split("\n");
+  for (const [index, line] of lines.entries()) {
+    const usesLine = parseUsesLine(line);
+    if (usesLine == null) continue;
+    const { prefix, scalar, rest, cr } = usesLine;
+
+    // the yaml serializer quotes some values (ex. `docker://` images), so
+    // work with the unquoted value and put the quotes back on the way out
+    const { quote, value: usesValue } = splitQuotedScalar(scalar);
+    const parsed = parseActionUses(usesValue);
+    if (!parsed) continue;
+
+    const result = rewrite(usesValue, parsed, rest);
+    if (result == null) continue;
+    lines[index] =
+      `${prefix}${quote}${result.value}${quote} # ${result.comment}${cr}`;
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Gets the `uses:` values of a generated file with the version each one
+ * should have in the source scripts, which is the original ref of each pin.
+ *
+ * Unpinned refs are left out, even full version tags, because the folders
+ * also hold workflows that were not generated, whose versions say nothing
+ * about the scripts'. The pin comment is what marks a line as generated.
+ */
+function parseVersionedUses(content: string): string[] {
+  const result: string[] = [];
+  for (const line of content.split("\n")) {
+    const usesLine = parseUsesLine(line);
+    if (usesLine == null) continue;
+    const entry = parseInlinePin(usesLine.scalar, usesLine.rest);
+    if (entry != null) result.push(entry.original);
+  }
+  for (const pin of parseFooterPins(content)) {
+    result.push(pin.original);
+  }
+  return result;
+}
+
+/** Reads the pins of the legacy footer format (`# gagen:pin owner/repo@ref = HASH`). */
+function parseFooterPins(content: string): PinEntry[] {
+  const pins: PinEntry[] = [];
+  // note: `$` in multiline mode also matches before the carriage return of
+  // a crlf line ending, so this reads crlf files as-is
+  const footerRe = /^# gagen:pin (.+) = ([0-9a-f]{40})$/gm;
+  let m;
+  while ((m = footerRe.exec(content)) !== null) {
+    pins.push({ original: m[1], pinned: m[2] });
+  }
+  return pins;
+}
+
 /** The parts of a yaml `uses:` line. */
 interface UsesLine {
   /** the indentation, list dash, key, and the spacing after it */
@@ -426,19 +658,91 @@ function isLineSpace(char: string): boolean {
 }
 
 /**
- * Parses a pin out of the value and trailing text of a `uses:` line
- * (ex. `owner/repo@<sha>` followed by ` # v1`).
+ * Parses a pin out of the value and trailing text of a `uses:` line, which is
+ * either a commit hash (ex. `owner/repo@<sha>` followed by ` # v1`) or a full
+ * version tag narrowed from a partial one (ex. `owner/repo@v1.2.3` followed
+ * by ` # v1`).
  */
-function parseInlinePin(scalar: string, rest: string): PinEntry | undefined {
+function parseInlinePin(
+  scalar: string,
+  rest: string,
+): PinEntry & { kind: PinKind } | undefined {
   const { value } = splitQuotedScalar(scalar);
   const atIndex = value.lastIndexOf("@");
   if (atIndex === -1) return undefined;
-  const hash = value.substring(atIndex + 1);
-  if (!isCommitHash(hash)) return undefined;
+  const pinned = value.substring(atIndex + 1);
   const ref = parsePinComment(rest);
   if (ref == null) return undefined;
   const actionPath = value.substring(0, atIndex);
-  return { original: `${actionPath}@${ref}`, hash };
+  if (isCommitHash(pinned)) {
+    return { kind: "hash", original: `${actionPath}@${ref}`, pinned };
+  }
+  const originalRef = originalRefOfTag(pinned, ref);
+  if (originalRef == null) return undefined;
+  return { kind: "tag", original: `${actionPath}@${originalRef}`, pinned };
+}
+
+/**
+ * Gets the partial version a full version tag stands for, given the ref in
+ * its pin comment (ex. `v6.0.1` with a `v6` comment stands for `v6`).
+ * A partial version with itself as the comment (ex. `v6 # v6`) is one there
+ * was no full version to narrow to, so it stands for itself.
+ *
+ * When the tag is outside the comment's family, the tag was bumped without
+ * its comment (ex. by Dependabot changing `v6.0.1 # v6` to `v7.0.0 # v6`).
+ * Then it stands for the same precision of the new tag (`v7`), so the bump is
+ * seen as a version change instead of being taken to still be `v6`. That
+ * precision is unclear for a comment with a suffix (ex. `v6-beta`), so then
+ * the tag is not taken to be a pin.
+ */
+function originalRefOfTag(tag: string, commentRef: string): string | undefined {
+  if (tag === commentRef) {
+    return isNarrowableVersionRef(tag) ? tag : undefined;
+  }
+  const tagVersion = parseVersionRef(tag);
+  const commentVersion = parseVersionRef(commentRef);
+  if (tagVersion == null || !isFullVersion(tagVersion)) return undefined;
+  if (commentVersion == null || isFullVersion(commentVersion)) return undefined;
+  if (narrowsVersion(tagVersion, commentVersion)) return commentRef;
+  if (commentVersion.rest !== "") return undefined;
+  const { prefix } = commentVersion;
+  return isMajorOnly(commentVersion)
+    ? `${prefix}${tagVersion.major}`
+    : `${prefix}${tagVersion.major}.${tagVersion.minor}`;
+}
+
+/**
+ * Gets if the parsed `uses:` value is a reusable workflow, which
+ * `gh actions-lock` does not lock.
+ */
+function isReusableWorkflow(parsed: ParsedUses): boolean {
+  return parsed.path.startsWith(".github/workflows/");
+}
+
+function isReusableWorkflowUses(uses: string): boolean {
+  const parsed = parseActionUses(uses);
+  return parsed != null && isReusableWorkflow(parsed);
+}
+
+const tagCommitsByRepo = new Map<string, Map<string, string>>();
+
+/**
+ * Lists the commit of every tag in the repository, remembering the list for
+ * the rest of the process so that each repository is only listed once.
+ */
+function listTagCommits(owner: string, repo: string): Map<string, string> {
+  const url = `https://github.com/${owner}/${repo}`;
+  let tagCommits = tagCommitsByRepo.get(url);
+  if (tagCommits == null) {
+    const output = execFileSync(
+      "git",
+      ["ls-remote", "--tags", url],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    tagCommits = parseTagCommits(output);
+    tagCommitsByRepo.set(url, tagCommits);
+  }
+  return tagCommits;
 }
 
 /** Gets the ref recorded in the inline comment of a pinned `uses:` line. */
@@ -466,7 +770,7 @@ function findCachedRef(
       cached.owner === parsed.owner &&
       cached.repo === parsed.repo &&
       cached.path === parsed.path &&
-      entry.hash === parsed.ref
+      entry.pinned === parsed.ref
     ) {
       return cached.ref;
     }
@@ -486,4 +790,149 @@ function splitQuotedScalar(scalar: string): { quote: string; value: string } {
     }
   }
   return { quote: "", value: scalar };
+}
+
+/**
+ * A version-shaped ref like `v6`, `v6.1`, `6.1.2` or `v2.0.0-rc.1`.
+ *
+ * This and the version functions below port `SemVer` from GitHub's lockfile
+ * library (`go/pkg/lockfile/version.go` in github/actions-lockfile), which
+ * `gh actions-lock` narrows with. They mirror it as closely as possible, quirks
+ * included, because a ref gagen narrows differently gets rewritten by
+ * `gh actions-lock` and then fails `--lint`.
+ */
+interface VersionRef {
+  prefix: string;
+  major: number;
+  /** the minor version, which is 0 when the ref has none */
+  minor: number;
+  /** the patch version, which is 0 when the ref has none */
+  patch: number;
+  /** what follows the numbers (ex. `-rc.1`), which is empty when nothing does */
+  rest: string;
+  /** the ref as written */
+  raw: string;
+}
+
+/**
+ * Gets if the ref is a version that `gh actions-lock` would narrow, which is
+ * any version-shaped ref that isn't a full version (ex. `v6`, `v6.1` or
+ * `v2.0.0-rc.1`).
+ */
+function isNarrowableVersionRef(ref: string): boolean {
+  const version = parseVersionRef(ref);
+  return version != null && !isFullVersion(version);
+}
+
+/**
+ * Parses a version ref made of an optional `v` prefix, then one to three dot
+ * separated numbers, then anything else (ex. a `-rc.1` pre-release suffix).
+ *
+ * Ports `ParseSemVer`, which matches
+ * `^(v?)(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$` and rejects full commit hashes.
+ */
+function parseVersionRef(ref: string): VersionRef | undefined {
+  if (isFullSha(ref)) return undefined;
+  const prefix = ref.startsWith("v") ? "v" : "";
+  const numbers: number[] = [];
+  let index = prefix.length;
+  while (numbers.length < 3) {
+    let start = index;
+    if (numbers.length > 0) {
+      // a number after the first must follow a dot
+      if (ref[index] !== ".") break;
+      start++;
+    }
+    let end = start;
+    while (end < ref.length && isDigit(ref[end])) {
+      end++;
+    }
+    if (end === start) break;
+    const number = Number(ref.substring(start, end));
+    // the go version fails to parse a number that overflows an int
+    if (!Number.isSafeInteger(number)) return undefined;
+    numbers.push(number);
+    index = end;
+  }
+  if (numbers.length === 0) return undefined;
+  return {
+    prefix,
+    major: numbers[0],
+    minor: numbers[1] ?? 0,
+    patch: numbers[2] ?? 0,
+    rest: ref.substring(index),
+    raw: ref,
+  };
+}
+
+/**
+ * Gets if the ref is a 40 (sha1) or 64 (sha256) character commit hash in
+ * either case, which is how `gh actions-lock` tells a hash from a version
+ * like `1234567`.
+ */
+function isFullSha(ref: string): boolean {
+  if (ref.length !== 40 && ref.length !== 64) return false;
+  for (const char of ref) {
+    if (!isDigit(char) && !isHexLetter(char.toLowerCase())) return false;
+  }
+  return true;
+}
+
+function isDigit(char: string): boolean {
+  return char >= "0" && char <= "9";
+}
+
+function isHexLetter(char: string): boolean {
+  return char >= "a" && char <= "f";
+}
+
+/**
+ * Gets if the version has no suffix and isn't written as a major only or
+ * major.minor version (ports `IsFull`).
+ *
+ * This is not the same as having a patch number: the major and minor tags are
+ * formatted without leading zeros, so `v06` and `v2024.01` count as full.
+ */
+function isFullVersion(version: VersionRef): boolean {
+  return version.rest === "" &&
+    version.raw !== majorTag(version) &&
+    version.raw !== minorTag(version);
+}
+
+/** Gets if the version is written as a major only version like `v6`. */
+function isMajorOnly(version: VersionRef): boolean {
+  return version.raw === majorTag(version);
+}
+
+function majorTag(version: VersionRef): string {
+  return `${version.prefix}${version.major}`;
+}
+
+function minorTag(version: VersionRef): string {
+  return `${version.prefix}${version.major}.${version.minor}`;
+}
+
+/**
+ * Gets if the full version `full` is in the family of `ref` (ports
+ * `sameVersionFamily`): the same major for a major only ref like `v6`,
+ * otherwise the same major and minor, where a missing minor counts as 0 (ex.
+ * `v6-beta` is in the `v6.0` family).
+ */
+function narrowsVersion(full: VersionRef, ref: VersionRef): boolean {
+  if (!isFullVersion(full) || full.major !== ref.major) return false;
+  return isMajorOnly(ref) || full.minor === ref.minor;
+}
+
+/**
+ * Gets if full version `a` should be picked over full version `b`, matching
+ * the order `gh actions-lock` sorts tags in: the higher version, then the `v`
+ * prefixed tag, then the tag that sorts last as a string (ex. `v1.1.0` over
+ * `v1.01.0`).
+ */
+function isHigherVersion(a: VersionRef, b: VersionRef): boolean {
+  if (a.major !== b.major) return a.major > b.major;
+  if (a.minor !== b.minor) return a.minor > b.minor;
+  if (a.patch !== b.patch) return a.patch > b.patch;
+  if ((a.prefix === "v") !== (b.prefix === "v")) return a.prefix === "v";
+  return a.raw > b.raw;
 }

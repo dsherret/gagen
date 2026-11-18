@@ -60,10 +60,10 @@ export type {
   Operand,
   TernaryValue,
 } from "./expression.ts";
-// Only `RefResolver` belongs to the public API — it appears in the `pinDeps`
-// option of `writeOrLint`. The rest of `pin.ts` is implementation detail of
-// `writeOrLint` and the CLI.
-export type { RefResolver } from "./pin.ts";
+// Only `RefResolver` and `RefNarrower` belong to the public API — they appear
+// in the `pinDeps` option of `writeOrLint`. The rest of `pin.ts` is
+// implementation detail of `writeOrLint` and the CLI.
+export type { RefNarrower, RefResolver } from "./pin.ts";
 export { defineMatrix, Matrix } from "./matrix.ts";
 export type {
   PermissionLevel,

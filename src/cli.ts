@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,7 +9,17 @@ import { assertKnownFlags } from "./write.ts";
 const SCRIPT_EXTENSIONS = [".ts", ".js", ".mts", ".mjs", ".cts", ".cjs"];
 const YAML_EXTENSIONS = [".yml", ".yaml"];
 
-export async function runCli() {
+/**
+ * Runs a command, either capturing its stdout or letting it write to the
+ * terminal, and gets undefined when the command is not installed.
+ */
+export type CommandRunner = (
+  command: string,
+  args: readonly string[],
+  options: { cwd: string; captureOutput: boolean },
+) => { status: number; stdout: string } | undefined;
+
+export async function runCli(runCommand: CommandRunner = runCommandSync) {
   const args = process.argv.slice(2);
   if (args.includes("--help") || args.includes("-h")) {
     console.log(helpText());
@@ -45,6 +56,64 @@ export async function runCli() {
     );
     process.exit(1);
   }
+
+  if (workflowsDir) {
+    runActionsLock(workflowsDir, args.includes("--lint"), runCommand);
+  }
+}
+
+/**
+ * Updates the workflow lockfile (`.github/workflows/actions.lock`), when
+ * there is one, with `gh actions-lock`, or verifies it with
+ * `gh actions-lock --verify` when linting. This is skipped with a warning
+ * when the gh cli or its actions-lock extension isn't installed.
+ */
+function runActionsLock(
+  workflowsDir: string,
+  isLinting: boolean,
+  runCommand: CommandRunner,
+) {
+  if (!fs.existsSync(join(workflowsDir, "actions.lock"))) return;
+  const repoRoot = dirname(dirname(workflowsDir));
+  const lockfileName = ".github/workflows/actions.lock";
+  const ghArgs = isLinting ? ["actions-lock", "--verify"] : ["actions-lock"];
+  const ghCommand = `gh ${ghArgs.join(" ")}`;
+  const action = isLinting ? "verifying" : "updating";
+
+  const extensions = runCommand("gh", ["extension", "list"], {
+    cwd: repoRoot,
+    captureOutput: true,
+  });
+  if (extensions == null) {
+    warn(
+      `not ${action} ${lockfileName} because the gh cli is not installed. Install it from https://cli.github.com, then run \`gh extension install github/gh-actions-lock\`.`,
+    );
+    return;
+  }
+  if (!hasActionsLockExtension(extensions.stdout)) {
+    warn(
+      `not ${action} ${lockfileName} because the gh actions-lock extension is not installed. Install it with \`gh extension install github/gh-actions-lock\`.`,
+    );
+    return;
+  }
+
+  const label = isLinting ? "Verifying" : "Updating";
+  const color = isLinting ? "\x1b[36m" : "\x1b[32m";
+  console.error(
+    `${color}${label}\x1b[0m ${lockfileName} by running \`${ghCommand}\``,
+  );
+  const result = runCommand("gh", ghArgs, {
+    cwd: repoRoot,
+    captureOutput: false,
+  });
+  if (result == null || result.status !== 0) {
+    console.error(
+      isLinting
+        ? `Error: \`${ghCommand}\` failed for ${lockfileName}. Run without --lint to update it.`
+        : `Error: \`${ghCommand}\` failed to update ${lockfileName}.`,
+    );
+    process.exit(1);
+  }
 }
 
 function pullVersions(dirs: string[]) {
@@ -63,7 +132,7 @@ function pullVersions(dirs: string[]) {
 
   if (versions.size === 0) {
     if (conflicts.size === 0) {
-      console.error("No pinned versions found in generated YAML files.");
+      console.error("No action versions found in generated YAML files.");
     }
     return;
   }
@@ -113,6 +182,39 @@ async function writeOrLint(
     await import(pathToFileURL(file).href);
   }
   return ranAny;
+}
+
+/**
+ * Gets if the output of `gh extension list` has the actions-lock extension,
+ * which is listed with a tab separated name like `gh actions-lock` first.
+ */
+function hasActionsLockExtension(extensionList: string): boolean {
+  return extensionList.split("\n").some((line) =>
+    line.split("\t")[0].trim() === "gh actions-lock"
+  );
+}
+
+function warn(message: string) {
+  console.error(`\x1b[33mwarning\x1b[0m ${message}`);
+}
+
+function runCommandSync(
+  command: string,
+  args: readonly string[],
+  options: { cwd: string; captureOutput: boolean },
+): { status: number; stdout: string } | undefined {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd,
+    encoding: "utf8",
+    stdio: options.captureOutput ? ["ignore", "pipe", "inherit"] : "inherit",
+  });
+  if (result.error != null) {
+    if ((result.error as { code?: unknown }).code === "ENOENT") {
+      return undefined;
+    }
+    throw result.error;
+  }
+  return { status: result.status ?? 1, stdout: result.stdout ?? "" };
 }
 
 function findGeneratedYamlFiles(dirs: string[]): string[] {
@@ -169,9 +271,13 @@ Runs every script in the closest .github/workflows directory that uses
 
 Options:
   --lint           verify the generated files are up to date instead of
-                   writing them, exiting non-zero when they are not
+                   writing them, exiting non-zero when they are not. When
+                   there is a .github/workflows/actions.lock lockfile, this
+                   also runs \`gh actions-lock --verify\` (and without
+                   --lint, \`gh actions-lock\` to update it)
   --update-pins    re-resolve every pinned action instead of reusing the
-                   hashes stored in the generated files
+                   hashes (or version tags in lockfile mode) stored in the
+                   generated files
   --pull-versions  update the action versions in the scripts to match the
                    versions in the generated yaml files (the workflows, the
                    composite actions under .github/actions and a root

@@ -65,8 +65,6 @@ Generate via the `gagen` cli:
 
 ```sh
 npx gagen
-# or alternatively run the script directly
-deno run -A .github/workflows/ci.ts
 ```
 
 This generates a `ci.generated.yml` with steps in the correct order and figures
@@ -105,9 +103,7 @@ up to date:
 ```ts
 const lintStep = step({
   name: "Lint CI generation",
-  // alternatively, use `npx gagen --lint` to lint all the files
-  // in the `.github/workflows` and `.github/actions` folders
-  run: "./.github/workflows/ci.ts --lint",
+  run: "npx gagen --lint",
 });
 ```
 
@@ -216,6 +212,29 @@ Limitations:
   a real step. Keep such lines out of run scripts, or set `pinDeps` to `false`
   for that workflow.
 - Local (`./action`) and `docker://` references are never pinned.
+
+### Workflow lockfiles (experimental)
+
+To use a
+[workflow lockfile](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles)
+instead of commit hashes, run
+[`gh actions-lock`](https://github.com/github/gh-actions-lock) once to create
+`.github/workflows/actions.lock`, then `npx gagen`. When that file exists, gagen
+writes version tags instead of hashes, `npx gagen` runs `gh actions-lock` to
+update the lockfile, and `npx gagen --lint` runs `gh actions-lock --verify` (or
+warns if `gh` or the extension isn't installed).
+
+Reusable workflows from other repositories are still pinned to a hash because
+the lockfile doesn't cover them.
+
+Notes:
+
+- Write tags, not hashes, in the scripts. Otherwise `gh actions-lock` rewrites
+  the hashes and `--lint` fails.
+- Reference composite actions in the same repository with `$/` instead of `./`
+  (ex. `uses: "$/.github/actions/setup"`).
+- To use lockfile mode before the lockfile exists, set `pinDeps` to
+  `"lockfile"`.
 
 ## Conditions
 
