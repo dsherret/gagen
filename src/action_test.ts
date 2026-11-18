@@ -268,7 +268,7 @@ Deno.test("defineInputs rejects an input that shadows a member", () => {
   assertThrows(
     () => defineInputs({ constructor: { description: "x" } }),
     Error,
-    'Input "constructor" conflicts with an ActionInputs member',
+    'Input "constructor" conflicts with a member of ActionInputs',
   );
 });
 

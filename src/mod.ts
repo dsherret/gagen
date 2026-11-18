@@ -29,13 +29,20 @@ export type {
   ActionOutputDef,
 } from "./action.ts";
 export type {
-  WorkflowCallInput,
   WorkflowCallOutput,
   WorkflowCallSecret,
   WorkflowCallTrigger,
   WorkflowConfig,
+  WorkflowDispatchTrigger,
   WorkflowTriggers,
 } from "./workflow.ts";
+export {
+  defineWorkflowCallInputs,
+  defineWorkflowDispatchInputs,
+  WorkflowCallInputs,
+  WorkflowDispatchInputs,
+} from "./inputs.ts";
+export type { WorkflowCallInput, WorkflowDispatchInput } from "./inputs.ts";
 export {
   concat,
   Condition,

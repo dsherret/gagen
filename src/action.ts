@@ -2,6 +2,12 @@ import * as internal from "./internal.ts";
 import fs from "node:fs";
 import { stringify } from "@std/yaml/stringify";
 import { ExpressionValue } from "./expression.ts";
+import {
+  exposeInputExpressions,
+  type WithInputExprs,
+  WorkflowCallInputs,
+  WorkflowDispatchInputs,
+} from "./inputs.ts";
 import { Job, type JobDefaults } from "./job.ts";
 import type { StepLike } from "./step.ts";
 import { type WriteOrLintOptions, writeOrLintYaml } from "./write.ts";
@@ -38,39 +44,25 @@ export interface ActionConfig {
   branding?: { icon: string; color: string };
 }
 
-// declared ahead of ActionInputs because its constructor populates it
-const inputDefs = new WeakMap<
-  ActionInputs<string>,
-  Record<string, ActionInputDef>
->();
-
 /**
  * The inputs of a composite action. Each input is exposed as a property
  * holding the `inputs.<name>` expression, so inputs can be referenced directly
  * in step configuration and conditions.
  */
 export class ActionInputs<_K extends string> {
+  // a private field, which also keeps the inputs of a workflow trigger from
+  // type checking as composite action inputs
+  readonly #defs: Record<string, ActionInputDef>;
+
   constructor(defs: Record<string, ActionInputDef>) {
-    // held outside the class so that neither the definition nor an accessor for
-    // it becomes public API, which would collide with the shadow check below
-    inputDefs.set(this as ActionInputs<string>, defs);
-    for (const name of Object.keys(defs)) {
-      if (name in this) {
-        throw new Error(
-          `Input "${name}" conflicts with an ActionInputs member — rename the input.`,
-        );
-      }
-      (this as Record<string, unknown>)[name] = new ExpressionValue(
-        `inputs.${name}`,
-      );
-    }
+    this.#defs = defs;
+    exposeInputExpressions(this, defs, "ActionInputs");
   }
 
   /** Serializes the input definitions to their YAML form. */
   [internal.toYaml](): Record<string, unknown> {
     const result: Record<string, unknown> = {};
-    const defs = inputDefs.get(this as ActionInputs<string>) ?? {};
-    for (const [name, def] of Object.entries(defs)) {
+    for (const [name, def] of Object.entries(this.#defs)) {
       const input: Record<string, unknown> = {
         description: def.description,
       };
@@ -89,20 +81,20 @@ export class ActionInputs<_K extends string> {
   }
 }
 
-type InputsWithExprs<K extends string> =
-  & ActionInputs<K>
-  & {
-    readonly [P in K]: ExpressionValue;
-  };
-
 /**
  * Defines the inputs of a composite action, returning them with a typed
  * property per input holding that input's `inputs.<name>` expression.
+ *
+ * For the inputs of a workflow, use `defineWorkflowDispatchInputs` or
+ * `defineWorkflowCallInputs` instead.
  */
 export function defineInputs<const T extends Record<string, ActionInputDef>>(
   defs: T,
-): InputsWithExprs<keyof T & string> {
-  return new ActionInputs(defs) as InputsWithExprs<keyof T & string>;
+): WithInputExprs<ActionInputs<keyof T & string>, keyof T & string> {
+  return new ActionInputs(defs) as WithInputExprs<
+    ActionInputs<keyof T & string>,
+    keyof T & string
+  >;
 }
 
 /**
@@ -129,6 +121,7 @@ export class Action {
     }
 
     if (config.inputs != null) {
+      assertActionInputs(config.inputs);
       const inputs = config.inputs[internal.toYaml]();
       if (Object.keys(inputs).length > 0) {
         obj.inputs = inputs;
@@ -197,6 +190,19 @@ export class Action {
 /** Creates a composite action from the given configuration. */
 export function action(config: ActionConfig): Action {
   return new Action(config);
+}
+
+/** Fails for inputs that were not defined with `defineInputs`. */
+function assertActionInputs(inputs: unknown) {
+  if (inputs instanceof ActionInputs) return;
+  const received = inputs instanceof WorkflowDispatchInputs
+    ? "workflow_dispatch inputs"
+    : inputs instanceof WorkflowCallInputs
+    ? "workflow_call inputs"
+    : "inputs that were not defined with defineInputs()";
+  throw new Error(
+    `The inputs of a composite action received ${received}. Use defineInputs().`,
+  );
 }
 
 /**
