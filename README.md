@@ -103,9 +103,7 @@ up to date:
 ```ts
 const lintStep = step({
   name: "Lint CI generation",
-  // alternatively, use `npx gagen --lint` to lint all the files
-  // in the `.github/workflows` and `.github/actions` folders
-  run: "./.github/workflows/ci.ts --lint",
+  run: "npx gagen --lint",
 });
 ```
 
