@@ -603,12 +603,12 @@ step.
 
 ## Typed matrix
 
-`defineMatrix()` gives you typed access to matrix values:
+`job.defineMatrix()` gives you typed access to matrix values:
 
 ```ts
-import { workflow, defineMatrix } from "gagen";
+import { job, workflow } from "gagen";
 
-const matrix = defineMatrix({
+const matrix = job.defineMatrix({
   include: [
     { runner: "ubuntu-latest" },
     { runner: "macos-latest" },

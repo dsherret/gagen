@@ -1,7 +1,8 @@
 import * as internal from "./internal.ts";
 import { Condition, ExpressionValue } from "./expression.ts";
 
-type ExtractMatrixKeys<T> =
+/** The keys of a matrix definition, including keys introduced by `include`. */
+export type ExtractMatrixKeys<T> =
   | Exclude<keyof T & string, "include" | "exclude">
   | (T extends { include: readonly (infer I)[] } ? keyof I & string : never);
 
@@ -71,17 +72,14 @@ export function matrixDefOf(matrix: Matrix<string>): Record<string, unknown> {
   return matrixDefs.get(matrix) ?? {};
 }
 
-type MatrixWithExprs<K extends string> =
+/** A matrix with a typed property per key holding its expression. */
+export type MatrixWithExprs<K extends string> =
   & Matrix<K>
   & {
     readonly [P in K]: ExpressionValue;
   };
 
-/**
- * Defines a build matrix, returning it with a typed property per matrix key
- * (including keys introduced by `include` entries) holding that key's
- * `matrix.<key>` expression.
- */
+/** The implementation of `job.defineMatrix`. */
 export function defineMatrix<const T extends Record<string, unknown>>(
   def: T,
 ): MatrixWithExprs<ExtractMatrixKeys<T>> {

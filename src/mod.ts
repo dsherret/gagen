@@ -8,7 +8,7 @@ export type {
   StepFunction,
   StepLike,
 } from "./step.ts";
-export { Job, job } from "./job.ts";
+export { Job, job, type JobFunction } from "./job.ts";
 export type {
   JobConfig,
   JobDef,
@@ -42,10 +42,10 @@ export {
   concat,
   Condition,
   conditions,
-  defineExprObj,
   ElseIfBuilder,
   expr,
   ExpressionValue,
+  type ExprFunction,
   fromJSON,
   hashFiles,
   join,
@@ -66,7 +66,7 @@ export type {
 // in the `pinDeps` option of `writeOrLint`. The rest of `pin.ts` is
 // implementation detail of `writeOrLint` and the CLI.
 export type { RefNarrower, RefResolver } from "./pin.ts";
-export { defineMatrix, Matrix } from "./matrix.ts";
+export { Matrix } from "./matrix.ts";
 export type {
   PermissionLevel,
   Permissions,
@@ -84,6 +84,8 @@ export type {
 import { workflow as workflow_ } from "./workflow.ts";
 import { artifact as artifact_ } from "./artifact.ts";
 import { action as action_ } from "./action.ts";
+import { job as job_ } from "./job.ts";
+import { expr as expr_ } from "./expression.ts";
 
 /** @deprecated Use `workflow` instead. */
 export const createWorkflow: typeof workflow_ = workflow_;
@@ -91,6 +93,10 @@ export const createWorkflow: typeof workflow_ = workflow_;
 export const defineArtifact: typeof artifact_ = artifact_;
 /** @deprecated Use `action.defineInputs` instead. */
 export const defineInputs: typeof action_.defineInputs = action_.defineInputs;
+/** @deprecated Use `job.defineMatrix` instead. */
+export const defineMatrix: typeof job_.defineMatrix = job_.defineMatrix;
+/** @deprecated Use `expr.defineObj` instead. */
+export const defineExprObj: typeof expr_.defineObj = expr_.defineObj;
 
 // run the cli
 if (import.meta.main) {

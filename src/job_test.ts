@@ -3,7 +3,6 @@ import { parse } from "@std/yaml/parse";
 import {
   concat,
   conditions,
-  defineMatrix,
   expr,
   fromJSON,
   job,
@@ -154,10 +153,12 @@ jobs:
   );
 });
 
-Deno.test("needs inferred from a defineMatrix() referencing a job output", () => {
+Deno.test("needs inferred from a job.defineMatrix() referencing a job output", () => {
   setup();
   const { job: setupJob } = producerJob("setup");
-  const matrix = defineMatrix({ version: fromJSON(setupJob.outputs.value) });
+  const matrix = job.defineMatrix({
+    version: fromJSON(setupJob.outputs.value),
+  });
   const wf = workflow({
     name: "ci",
     on: {},
@@ -674,7 +675,7 @@ Deno.test("fail-fast accepts a condition", () => {
         id: "a",
         runsOn: "ubuntu-latest",
         strategy: {
-          matrix: defineMatrix({ os: ["ubuntu-latest"] }),
+          matrix: job.defineMatrix({ os: ["ubuntu-latest"] }),
           failFast: conditions.isBranch("main"),
         },
         steps: [step({ run: "x" })],
