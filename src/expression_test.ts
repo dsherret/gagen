@@ -5,7 +5,6 @@ import {
   concat,
   Condition,
   conditions,
-  defineExprObj,
   expr,
   type ExpressionSource,
   ExpressionValue,
@@ -742,47 +741,47 @@ Deno.test("and does not absorb when no overlap", () => {
   );
 });
 
-// --- defineExprObj ---
+// --- expr.defineObj ---
 
-Deno.test("defineExprObj: string values become ExpressionValue", () => {
-  const m = defineExprObj({ os: "linux" });
+Deno.test("expr.defineObj: string values become ExpressionValue", () => {
+  const m = expr.defineObj({ os: "linux" });
   assertEquals(m.os instanceof ExpressionValue, true);
   // serializes inline, not as ${{ }}
   assertEquals(m.os.toString(), "linux");
 });
 
-Deno.test("defineExprObj: boolean true becomes Condition", () => {
-  const m = defineExprObj({ skip: true });
+Deno.test("expr.defineObj: boolean true becomes Condition", () => {
+  const m = expr.defineObj({ skip: true });
   assertEquals(m.skip instanceof Condition, true);
   assertEquals(m.skip.toExpression(), "true");
 });
 
-Deno.test("defineExprObj: boolean false becomes Condition", () => {
-  const m = defineExprObj({ skip: false });
+Deno.test("expr.defineObj: boolean false becomes Condition", () => {
+  const m = expr.defineObj({ skip: false });
   assertEquals(m.skip instanceof Condition, true);
   assertEquals(m.skip.toExpression(), "false");
 });
 
-Deno.test("defineExprObj: Condition values pass through", () => {
+Deno.test("expr.defineObj: Condition values pass through", () => {
   const cond = conditions.isBranch("main");
-  const m = defineExprObj({ skip: cond });
+  const m = expr.defineObj({ skip: cond });
   assertEquals(m.skip, cond);
 });
 
-Deno.test("defineExprObj: ExpressionValue values pass through", () => {
+Deno.test("expr.defineObj: ExpressionValue values pass through", () => {
   const e = expr("matrix.os");
-  const m = defineExprObj({ os: e });
+  const m = expr.defineObj({ os: e });
   assertEquals(m.os, e);
 });
 
-Deno.test("defineExprObj: number values become ExpressionValue", () => {
-  const m = defineExprObj({ count: 42 });
+Deno.test("expr.defineObj: number values become ExpressionValue", () => {
+  const m = expr.defineObj({ count: 42 });
   assertEquals(m.count instanceof ExpressionValue, true);
   assertEquals(m.count.toString(), "42");
 });
 
-Deno.test("defineExprObj: .equals() simplifies literal comparisons", () => {
-  const m = defineExprObj({ os: "linux" });
+Deno.test("expr.defineObj: .equals() simplifies literal comparisons", () => {
+  const m = expr.defineObj({ os: "linux" });
   // same literal → simplifies to true
   assertEquals(m.os.equals("linux").toExpression(), "true");
   // different literal → simplifies to false
@@ -1192,8 +1191,8 @@ Deno.test("string literals compare ignoring case, like GitHub does", () => {
   assertEquals(literal("Linux").notEquals("windows").toExpression(), "true");
 });
 
-Deno.test("defineExprObj comparisons ignore case", () => {
-  const m = defineExprObj({ os: "Linux" });
+Deno.test("expr.defineObj comparisons ignore case", () => {
+  const m = expr.defineObj({ os: "Linux" });
   assertEquals(m.os.equals("linux").toExpression(), "true");
   assertEquals(m.os.notEquals("linux").toExpression(), "false");
 });
@@ -1836,23 +1835,23 @@ Deno.test("hashFiles mixes string and expression patterns", () => {
   assertEquals(v[internal.allSources].has(s), true);
 });
 
-// --- defineExprObj error path ---
+// --- expr.defineObj error path ---
 
-Deno.test("defineExprObj throws for unsupported value types", () => {
+Deno.test("expr.defineObj throws for unsupported value types", () => {
   assertThrows(
-    () => defineExprObj({ bad: null }),
+    () => expr.defineObj({ bad: null }),
     Error,
     'Unsupported value type for key "bad"',
   );
   assertThrows(
-    () => defineExprObj({ bad: { nested: true } }),
+    () => expr.defineObj({ bad: { nested: true } }),
     Error,
     'Unsupported value type for key "bad"',
   );
 });
 
-Deno.test("defineExprObj keeps keys and is usable in conditions", () => {
-  const m = defineExprObj({ os: "linux", count: 2, skip: false });
+Deno.test("expr.defineObj keeps keys and is usable in conditions", () => {
+  const m = expr.defineObj({ os: "linux", count: 2, skip: false });
   assertEquals(Object.keys(m), ["os", "count", "skip"]);
   assertEquals(m.skip.or(m.os.equals("linux")).toExpression(), "true");
 });

@@ -3,7 +3,6 @@ import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   artifact,
   conditions,
-  defineMatrix,
   type ExpressionValue,
   job,
   Step,
@@ -800,7 +799,7 @@ jobs:
 
 Deno.test("an artifact name interpolating a matrix value carries into both steps", () => {
   setup();
-  const matrix = defineMatrix({ os: ["ubuntu-latest", "macos-latest"] });
+  const matrix = job.defineMatrix({ os: ["ubuntu-latest", "macos-latest"] });
   const dist = artifact(`dist-${matrix.os}`);
 
   assertEquals(
@@ -854,7 +853,8 @@ jobs:
 Deno.test("a matrix key that would shadow a Matrix member throws", () => {
   setup();
   assertThrows(
-    () => defineMatrix({ constructor: ["a", "b"] } as Record<string, unknown>),
+    () =>
+      job.defineMatrix({ constructor: ["a", "b"] } as Record<string, unknown>),
     Error,
     'Matrix key "constructor" conflicts with a Matrix member',
   );
@@ -867,7 +867,9 @@ Deno.test("matrixDefOf exposes the unserialized definition and its sources", () 
     run: "echo versions",
     outputs: ["versions"],
   });
-  const matrix = defineMatrix({ version: fromJSON(produce.outputs.versions) });
+  const matrix = job.defineMatrix({
+    version: fromJSON(produce.outputs.versions),
+  });
 
   // toYaml has already flattened the expression to a string, so needs
   // inference has to read the definition through matrixDefOf instead
@@ -893,7 +895,9 @@ Deno.test("a matrix built from a job output infers needs on that job", () => {
     steps: [produce],
     outputs: { versions: produce.outputs.versions },
   });
-  const matrix = defineMatrix({ version: fromJSON(setupJob.outputs.versions) });
+  const matrix = job.defineMatrix({
+    version: fromJSON(setupJob.outputs.versions),
+  });
 
   assertEquals(
     workflow({

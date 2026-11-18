@@ -6,7 +6,13 @@ import {
   isAlwaysFalse,
   isAlwaysTrue,
 } from "./expression.ts";
-import { Matrix, matrixDefOf } from "./matrix.ts";
+import {
+  defineMatrix,
+  type ExtractMatrixKeys,
+  Matrix,
+  matrixDefOf,
+  type MatrixWithExprs,
+} from "./matrix.ts";
 import type { Permissions } from "./permissions.ts";
 import {
   type ConditionLike,
@@ -944,8 +950,24 @@ function assertOutputStepsAreEmitted(
   }
 }
 
+/** Creates a job, with helpers for defining its parts. */
+export interface JobFunction {
+  /** Creates a job with the given id. */
+  (id: string, config: JobDef): Job;
+  /**
+   * Defines a build matrix, returning it with a typed property per matrix key
+   * (including keys introduced by `include` entries) holding that key's
+   * `matrix.<key>` expression.
+   */
+  defineMatrix<const T extends Record<string, unknown>>(
+    def: T,
+  ): MatrixWithExprs<ExtractMatrixKeys<T>>;
+}
+
 /** Creates a job with the given id. */
-export function job(id: string, config: JobDef): Job {
+export const job: JobFunction = Object.assign(createJob, { defineMatrix });
+
+function createJob(id: string, config: JobDef): Job {
   if ("uses" in config) {
     const { id: _id, ...reusableConfig } = config;
     return new Job(id, reusableConfig);

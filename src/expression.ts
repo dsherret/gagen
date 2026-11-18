@@ -519,10 +519,23 @@ export class RawCondition extends Condition {
   }
 }
 
-/** Creates an ExpressionValue from a raw expression string. */
-export function expr(expression: string): ExpressionValue {
-  return new ExpressionValue(expression);
+/** Creates expression values, with helpers for defining them. */
+export interface ExprFunction {
+  /** Creates an ExpressionValue from a raw expression string. */
+  (expression: string): ExpressionValue;
+  /**
+   * Converts an object with plain values into an object with typed
+   * Condition/ExpressionValue properties. Booleans become Conditions,
+   * strings/numbers become ExpressionValues that serialize inline.
+   */
+  defineObj<const T extends Record<string, unknown>>(obj: T): ExprMap<T>;
 }
+
+/** Creates an ExpressionValue from a raw expression string. */
+export const expr: ExprFunction = Object.assign(
+  (expression: string): ExpressionValue => new ExpressionValue(expression),
+  { defineObj: defineExprObj },
+);
 
 const ref = expr("github.ref");
 const eventName = expr("github.event_name");
@@ -1240,11 +1253,7 @@ export type ExprMap<T extends Record<string, unknown>> = {
   readonly [K in keyof T & string]: ExprOf<T[K]>;
 };
 
-/**
- * Converts an object with plain values into an object with typed
- * Condition/ExpressionValue properties. Booleans become Conditions,
- * strings/numbers become ExpressionValues that serialize inline.
- */
+/** The implementation of `expr.defineObj`. */
 export function defineExprObj<const T extends Record<string, unknown>>(
   obj: T,
 ): ExprMap<T> {

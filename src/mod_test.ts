@@ -2632,9 +2632,9 @@ jobs:
 
 // --- typed matrix ---
 
-Deno.test("defineMatrix with include serializes and provides typed expressions", () => {
+Deno.test("job.defineMatrix with include serializes and provides typed expressions", () => {
   setup();
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     include: [
       { os: "linux", runner: "ubuntu-latest" },
       { os: "macos", runner: "macos-latest" },
@@ -2675,9 +2675,9 @@ jobs:
   );
 });
 
-Deno.test("defineMatrix with key-value arrays", () => {
+Deno.test("job.defineMatrix with key-value arrays", () => {
   setup();
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     os: ["linux", "macos"],
     node: [18, 20],
   });
@@ -2724,7 +2724,7 @@ Deno.test("matrix values with Condition/ExpressionValue auto-serialize to ${{ }}
   const isMainBranch = isBranch("main");
   const isMainOrTag = isMainBranch.or(isTag());
 
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     include: [
       {
         os: "linux",
@@ -2775,7 +2775,7 @@ Deno.test("matrix values with Condition/ExpressionValue auto-serialize to ${{ }}
 
 Deno.test("matrix expressions work in step conditions", () => {
   setup();
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     os: ["linux", "macos"],
   });
   const checkout = step({ name: "Checkout", uses: "actions/checkout@v6" });
@@ -2889,7 +2889,7 @@ jobs:
 
 Deno.test("ternary with ExpressionValue as value", () => {
   setup();
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     include: [
       { os: "linux", runner: "ubuntu-latest" },
       { os: "macos", runner: "macos-latest" },
@@ -3254,7 +3254,7 @@ jobs:
 
 Deno.test("not() on comparison parenthesizes correctly", () => {
   setup();
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     include: [
       { cross: "true" },
       { cross: "false" },
@@ -3424,7 +3424,7 @@ jobs:
 
 Deno.test("job name accepts ExpressionValue", () => {
   setup();
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     include: [
       { target: "x86_64", runner: "ubuntu-latest" },
       { target: "aarch64", runner: "arm-runner" },
@@ -4468,7 +4468,7 @@ jobs:
 
 Deno.test("matrix with exclude serializes correctly", () => {
   setup();
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     os: ["linux", "macos", "windows"],
     node: [18, 20, 22],
     exclude: [
@@ -4518,7 +4518,7 @@ jobs:
 
 Deno.test("matrix exclude with include together", () => {
   setup();
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     os: ["linux", "macos"],
     node: [18, 20],
     include: [
@@ -4576,7 +4576,7 @@ jobs:
 
 Deno.test("exclude keys don't add new matrix expression keys", () => {
   setup();
-  const matrix = defineMatrix({
+  const matrix = job.defineMatrix({
     os: ["linux", "macos"],
     exclude: [
       { os: "macos" },
@@ -6518,11 +6518,11 @@ Deno.test("step.dependsOn() wrapping a single StepRef preserves its dependencies
   assertEquals(cIdx < bIdx, true);
 });
 
-// --- defineExprObj ---
+// --- expr.defineObj ---
 
-Deno.test("defineExprObj: string values serialize inline in YAML", () => {
+Deno.test("expr.defineObj: string values serialize inline in YAML", () => {
   setup();
-  const m = defineExprObj({ os: "linux" });
+  const m = expr.defineObj({ os: "linux" });
   const wf = workflow({
     name: "test",
     on: {},
@@ -6549,9 +6549,9 @@ jobs:
   );
 });
 
-Deno.test("defineExprObj: boolean condition usable in step.if()", () => {
+Deno.test("expr.defineObj: boolean condition usable in step.if()", () => {
   setup();
-  const m = defineExprObj({ skip: false });
+  const m = expr.defineObj({ skip: false });
   const wf = workflow({
     name: "test",
     on: {},
@@ -6577,9 +6577,9 @@ jobs:
   );
 });
 
-Deno.test("defineExprObj: mixed object end-to-end", () => {
+Deno.test("expr.defineObj: mixed object end-to-end", () => {
   setup();
-  const m = defineExprObj({
+  const m = expr.defineObj({
     os: "linux",
     save_cache: true,
     runner: "ubuntu-latest",
@@ -6646,7 +6646,7 @@ jobs:
 
 Deno.test("!false is omitted as always-true", () => {
   setup();
-  const m = defineExprObj({ skip: false });
+  const m = expr.defineObj({ skip: false });
   const wf = workflow({
     name: "test",
     on: {},
@@ -6696,7 +6696,7 @@ Deno.test("always() is NOT omitted even though semantically always-true", () => 
 
 Deno.test("true && true is omitted as always-true", () => {
   setup();
-  const m = defineExprObj({ a: true, b: true });
+  const m = expr.defineObj({ a: true, b: true });
   const wf = workflow({
     name: "test",
     on: {},
@@ -6723,7 +6723,7 @@ jobs:
 
 Deno.test("step with always-false condition is omitted from output", () => {
   setup();
-  const m = defineExprObj({ os: "linux" });
+  const m = expr.defineObj({ os: "linux" });
   const wf = workflow({
     name: "test",
     on: {},
@@ -7502,4 +7502,12 @@ jobs:
     process.argv.length = originalArgv.length;
     Deno.removeSync(tmpDir, { recursive: true });
   }
+});
+
+Deno.test("deprecated defineMatrix and defineExprObj still work", () => {
+  const matrix = defineMatrix({ os: ["linux", "mac"] });
+  assertEquals(matrix.os.expression, "matrix.os");
+  const obj = defineExprObj({ name: "x", enabled: true });
+  assertEquals(obj.name.toString(), "x");
+  assertEquals(obj.enabled.toExpression(), "true");
 });
