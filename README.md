@@ -631,33 +631,6 @@ workflow({
 });
 ```
 
-## Typed workflow inputs
-
-`defineWorkflowDispatchInputs()` and `defineWorkflowCallInputs()` give you typed
-access to the inputs of a `workflow_dispatch` or `workflow_call` trigger:
-
-```ts
-import { defineWorkflowDispatchInputs, step, workflow } from "gagen";
-
-const inputs = defineWorkflowDispatchInputs({
-  environment: { type: "choice", options: ["staging", "production"] },
-});
-
-workflow({
-  name: "deploy",
-  on: { workflow_dispatch: { inputs } },
-  jobs: [{
-    id: "deploy",
-    runsOn: "ubuntu-latest",
-    // inputs.environment is an ExpressionValue("inputs.environment")
-    steps: [step({ run: `./deploy.sh ${inputs.environment}` })],
-  }],
-});
-```
-
-A plain object of input definitions works too. For composite actions, use
-[`defineInputs()`](#composite-actions).
-
 ## Composite actions
 
 `action()` generates the `action.yml` of a
