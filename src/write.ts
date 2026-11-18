@@ -1,5 +1,7 @@
 import fs from "node:fs";
+import { dirname, join } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { parse } from "@std/yaml/parse";
 import {
   narrowYamlContent,
@@ -17,7 +19,8 @@ export interface WriteOrLintOptions {
   /**
    * How to pin the `uses:` references in the output.
    *
-   * - `true` (default) pins them to commit hashes.
+   * - `true` (default) pins them to commit hashes, or uses lockfile mode
+   *   when the repository has a `.github/workflows/actions.lock`.
    * - `false` leaves them as written.
    * - `"lockfile"` (experimental) is for use with a GitHub Actions workflow
    *   lockfile (`.github/workflows/actions.lock`), which pins each reference
@@ -50,7 +53,7 @@ export function writeOrLintYaml(
   options: WriteOrLintOptions,
 ): void {
   assertKnownFlags();
-  const pinning = getPinning(options.pinDeps);
+  const pinning = getPinning(options.pinDeps, options.filePath);
 
   if (isLintingNow()) {
     const existing = readForLint(options.filePath);
@@ -195,9 +198,12 @@ type Pinning =
 
 function getPinning(
   pinDeps: WriteOrLintOptions["pinDeps"],
+  filePath: URL,
 ): Pinning | undefined {
   if (pinDeps == null || pinDeps === true) {
-    return { kind: "hash", resolve: undefined };
+    return hasWorkflowLockfile(filePath)
+      ? { kind: "tag", narrow: undefined, resolve: undefined }
+      : { kind: "hash", resolve: undefined };
   } else if (pinDeps === false) {
     return undefined;
   } else if (pinDeps === "lockfile") {
@@ -206,6 +212,23 @@ function getPinning(
     return { kind: "tag", narrow: pinDeps.narrow, resolve: pinDeps.resolve };
   } else {
     return { kind: "hash", resolve: pinDeps.resolve };
+  }
+}
+
+/**
+ * Gets if the repository of the file has a workflow lockfile
+ * (`.github/workflows/actions.lock`), looking in each folder up from the file
+ * until the root of the git repository.
+ */
+function hasWorkflowLockfile(filePath: URL): boolean {
+  let dir = dirname(fileURLToPath(filePath));
+  while (true) {
+    if (fs.existsSync(join(dir, ".github", "workflows", "actions.lock"))) {
+      return true;
+    }
+    const parent = dirname(dir);
+    if (parent === dir || fs.existsSync(join(dir, ".git"))) return false;
+    dir = parent;
   }
 }
 

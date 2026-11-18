@@ -854,6 +854,56 @@ Deno.test("writeOrLint lockfile mode keeps a bump within the family", async () =
   }
 });
 
+Deno.test("writeOrLint uses lockfile mode by default when the repository has a lockfile", async () => {
+  const dir = createTempDir({
+    ".git/HEAD": "",
+    ".github/workflows/actions.lock": "version: 'v0.0.3'\n",
+  });
+  const filePath = new URL(`file://${dir}/.github/workflows/ci.yml`);
+  // a lockfile outside the repository is not used
+  const outer = createTempDir({
+    ".github/workflows/actions.lock": "version: 'v0.0.3'\n",
+    "repo/.git/HEAD": "",
+  });
+  const outerFilePath = new URL(`file://${outer}/repo/ci.yml`);
+  try {
+    const wf = lockfileWorkflow("actions/checkout@v6");
+    // gh actions-lock rewrites hashes, so the existing hash pin isn't reused
+    fs.writeFileSync(
+      filePath,
+      `      - uses: actions/checkout@${HASH} # v6\n`,
+    );
+    const { exitCode } = await captureRun(
+      ["--lint"],
+      () => wf.writeOrLint({ filePath }),
+    );
+    assertEquals(exitCode, 1);
+
+    // the default narrower lists tags with git, so narrow the tag first and
+    // check the default pinning reuses it
+    wf.writeOrLint({ filePath, pinDeps: { narrow: () => "v6.0.1" } });
+    const written = fs.readFileSync(filePath, "utf8");
+    wf.writeOrLint({ filePath });
+    assertEquals(fs.readFileSync(filePath, "utf8"), written);
+    assertEquals(
+      (await captureRun(["--lint"], () => wf.writeOrLint({ filePath })))
+        .exitCode,
+      undefined,
+    );
+
+    wf.writeOrLint({
+      filePath: outerFilePath,
+      pinDeps: { resolve: () => HASH },
+    });
+    const hashWritten = fs.readFileSync(outerFilePath, "utf8");
+    wf.writeOrLint({ filePath: outerFilePath, pinDeps: true });
+    assertEquals(fs.readFileSync(outerFilePath, "utf8"), hashWritten);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+    Deno.removeSync(outer, { recursive: true });
+  }
+});
+
 Deno.test("writeOrLint lockfile mode --lint fails when the version changed", async () => {
   const { dir, filePath } = tempFilePath();
   try {

@@ -221,27 +221,24 @@ Limitations:
 
 To use a
 [workflow lockfile](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles)
-(`.github/workflows/actions.lock`) instead of commit hashes, set `pinDeps` to
-`"lockfile"`:
-
-```ts
-wf.writeOrLint({ filePath, pinDeps: "lockfile" });
-```
+instead of commit hashes, run
+[`gh actions-lock`](https://github.com/github/gh-actions-lock) once to create
+`.github/workflows/actions.lock`, then `npx gagen`. When that file exists, gagen
+writes version tags instead of hashes, `npx gagen` runs `gh actions-lock` to
+update the lockfile, and `npx gagen --lint` runs `gh actions-lock --verify` (or
+warns if `gh` or the extension isn't installed).
 
 Reusable workflows from other repositories are still pinned to a hash because
 the lockfile doesn't cover them.
 
-Run [`gh actions-lock`](https://github.com/github/gh-actions-lock) once to
-create the lockfile. After that, `npx gagen` runs `gh actions-lock` to update it
-and `npx gagen --lint` runs `gh actions-lock --verify` (or warns if `gh` or the
-extension isn't installed).
-
 Notes:
 
-- Use lockfile mode for every workflow and write tags, not hashes, in the
-  scripts. Otherwise `gh actions-lock` rewrites the hashes and `--lint` fails.
+- Write tags, not hashes, in the scripts. Otherwise `gh actions-lock` rewrites
+  the hashes and `--lint` fails.
 - Reference composite actions in the same repository with `$/` instead of `./`
   (ex. `uses: "$/.github/actions/setup"`).
+- To use lockfile mode before the lockfile exists, set `pinDeps` to
+  `"lockfile"`.
 
 ## Conditions
 
